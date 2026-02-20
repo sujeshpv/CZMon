@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  {% load static %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CZ Mon - Mock</title>
+  <link rel="stylesheet" href="{% static 'css/pe.css' %}">
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo">CZ Mon</div>
+    <div class="search"><input class="search-input" placeholder="Search..."/></div>
+    <div class="user">admin</div>
+  </div>
+  <div class="container">
+    <aside class="sidebar" id="sidebar">
+      <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar">⟨</button>
+      <nav>
+        <a class="active" href="/">Dashboard</a>
+        <a href="#">Cluster Health</a>
+        <a href="#">Process health</a>
+        <a href="#">Stats</a>
+        <a href="#">Settings</a>
+      </nav>
+    </aside>
+    <main class="main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <script src="{% static 'js/pe.js' %}"></script>
+</body>
+</html>
