@@ -25,3 +25,18 @@
     setState(sidebar.classList.contains('collapsed') ? false : true);
   });
 })();
+// Handle external navigation links
+document.querySelectorAll('a.nav-link').forEach(link => {
+  link.addEventListener('click', function(e){
+    e.preventDefault();
+    const url = this.dataset.url;
+    if(!url) return;
+    
+    const main = document.querySelector('main.main');
+    main.innerHTML = '<iframe src="' + url + '" style="width:100%; height:100%; border:none;"></iframe>';
+    
+    // Update active state
+    document.querySelectorAll('a').forEach(a => a.classList.remove('active'));
+    this.classList.add('active');
+  });
+});
