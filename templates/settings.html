@@ -1,0 +1,79 @@
+{% extends "pe_base.html" %}
+
+{% block content %}
+<div class="card">
+  <h2>Settings</h2>
+  {% load static %}
+  {% if msg %}
+    <ul class="messages">
+      <li class="{{ level }}">{{ msg }}</li>
+    </ul>
+  {% endif %}
+
+  <div class="two-col">
+    <div class="card">
+      <h3>Add PC</h3>
+      <form method="post">
+        {% csrf_token %}
+        <div>
+          <label for="pc_ip">PC Virtual IP/FQDN</label>
+          <input id="pc_ip" name="pc_ip" type="text" placeholder="e.g. 10.0.0.5" />
+        </div>
+        <div style="margin-top:8px">
+          <button type="submit" name="add_pc">Add PC</button>
+        </div>
+      </form>
+
+      <h4>Configured PCs</h4>
+      <ul id="pcs-list">
+        {% for ip in pcs %}
+          <li data-ip="{{ ip }}">
+            {{ ip }}
+            <form method="post" style="display:inline;margin-left:8px">
+              {% csrf_token %}
+              <input type="hidden" name="ip" value="{{ ip }}" />
+              <button type="submit" name="delete_pc" class="delete-x" title="Delete PC">✖</button>
+            </form>
+          </li>
+        {% empty %}
+          <li class="muted">No PCs added</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>Add PE</h3>
+      <form method="post">
+        {% csrf_token %}
+        <div>
+          <label for="pe_ip">PE Virtual IP/FQDN</label>
+          <input id="pe_ip" name="pe_ip" type="text" placeholder="e.g. 10.0.0.8" />
+        </div>
+        <div>
+          <label for="pe_name">PE Name (optional)</label>
+          <input id="pe_name" name="pe_name" type="text" placeholder="Friendly name for PE" />
+        </div>
+        <div style="margin-top:8px">
+          <button type="submit" name="add_pe">Add PE</button>
+        </div>
+      </form>
+
+      <h4>Configured PEs</h4>
+      <ul id="pes-list">
+        {% for p in pes %}
+          <li data-ip="{{ p.ip }}" data-name="{{ p.name }}">
+            {% if p.name %}<strong>{{ p.name }}</strong> — {% endif %}{{ p.ip }}
+            <form method="post" style="display:inline;margin-left:8px">
+              {% csrf_token %}
+              <input type="hidden" name="ip" value="{{ p.ip }}" />
+              <button type="submit" name="delete_pe" class="delete-x" title="Delete PE">✖</button>
+            </form>
+          </li>
+        {% empty %}
+          <li class="muted">No PEs added</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

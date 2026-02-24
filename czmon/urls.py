@@ -18,9 +18,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from django.views.generic import TemplateView, RedirectView
+from coreapp import views as core_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("settings/", core_views.settings_view, name="settings"),
     path("", TemplateView.as_view(template_name="dashboard.html"), name="home"),
     path("pe/", RedirectView.as_view(pattern_name="home", permanent=True), name="pe_redirect"),
 ]
