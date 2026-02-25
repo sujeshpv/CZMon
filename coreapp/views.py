@@ -12,56 +12,64 @@ from urllib.parse import quote_plus
 def home(request):
     return render(request, "home1.html")
 
+def get_endpoints():
+    """Load and normalize endpoints from static/configurations/endpoints.json."""
+    endpoints_path = os.path.join(dj_settings.BASE_DIR, "static", "configurations", "endpoints.json")
+    if not os.path.exists(endpoints_path):
+        return {"pcs": [], "pes": []}
+    try:
+        with open(endpoints_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return {"pcs": [], "pes": []}
+
+    pcs = data.get("pcs", [])
+    pes = data.get("pes", [])
+
+    if isinstance(pcs, dict) and "virtual_ip" in pcs:
+        v = pcs.get("virtual_ip")
+        pcs = [v] if v else []
+    if isinstance(pes, dict) and "virtual_ip" in pes:
+        v = pes.get("virtual_ip")
+        pes = [v] if v else []
+
+    normalized_pcs = []
+    if isinstance(pcs, list):
+        for entry in pcs:
+            if isinstance(entry, str):
+                normalized_pcs.append({"name": entry or "", "ip": entry})
+            elif isinstance(entry, dict):
+                name = (entry.get("name") or "").strip()
+                ip = entry.get("ip") or entry.get("virtual_ip") or ""
+                normalized_pcs.append({"name": name, "ip": ip})
+    pcs = normalized_pcs
+
+    normalized_pes = []
+    if isinstance(pes, list):
+        for entry in pes:
+            if isinstance(entry, str):
+                normalized_pes.append({"name": "", "ip": entry})
+            elif isinstance(entry, dict):
+                name = entry.get("name", "")
+                ip = entry.get("ip") or entry.get("virtual_ip") or ""
+                normalized_pes.append({"name": name, "ip": ip})
+    pes = normalized_pes
+
+    return {"pcs": pcs, "pes": pes}
+
+
 def dashboard(request):
-    # sample context for the dashboard
+    data = get_endpoints()
     ctx = {
         "cluster_name": "Demo Cluster",
+        "total_clusters": len(data["pes"]),
+        "total_pcs": len(data["pcs"]),
     }
     return render(request, "dashboard.html", ctx)
 
 
 def settings_view(request):
-    # persist endpoints to static/configurations/endpoints.json
     endpoints_path = os.path.join(dj_settings.BASE_DIR, "static", "configurations", "endpoints.json")
-
-    def load_endpoints():
-        if not os.path.exists(endpoints_path):
-            return {"pcs": [], "pes": []}
-        try:
-            with open(endpoints_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except Exception:
-            return {"pcs": [], "pes": []}
-
-        # normalize structure to lists
-        pcs = data.get("pcs", [])
-        pes = data.get("pes", [])
-
-        if isinstance(pcs, dict) and "virtual_ip" in pcs:
-            v = pcs.get("virtual_ip")
-            pcs = [v] if v else []
-        if isinstance(pes, dict) and "virtual_ip" in pes:
-            v = pes.get("virtual_ip")
-            pes = [v] if v else []
-
-        # normalize pes entries to list of dicts with keys 'name' and 'ip'
-        normalized_pes = []
-        if isinstance(pes, list):
-            for entry in pes:
-                if isinstance(entry, str):
-                    normalized_pes.append({"name": "", "ip": entry})
-                elif isinstance(entry, dict):
-                    # support old key 'virtual_ip'
-                    name = entry.get("name", "")
-                    ip = entry.get("ip") or entry.get("virtual_ip") or ""
-                    normalized_pes.append({"name": name, "ip": ip})
-        pes = normalized_pes
-
-        # ensure lists
-        pcs = pcs if isinstance(pcs, list) else []
-        pes = pes if isinstance(pes, list) else []
-
-        return {"pcs": pcs, "pes": pes}
 
     def save_endpoints(data):
         dirpath = os.path.dirname(endpoints_path)
@@ -97,19 +105,29 @@ def settings_view(request):
         return redirect(reverse(name) + qs)
 
     if request.method == "POST":
-        data = load_endpoints()
+        data = get_endpoints()
         # Add PC
         if "add_pc" in request.POST:
+            pc_name = request.POST.get("pc_name", "").strip()
             pc_ip = request.POST.get("pc_ip", "").strip()
+            if not pc_name:
+                return redirect_with_msg("settings", "PC Name is required and cannot be blank", "error")
             if not pc_ip:
                 return redirect_with_msg("settings", "Please provide PC Virtual IP/FQDN", "error")
             if not is_valid_host(pc_ip):
                 return redirect_with_msg("settings", f"Invalid PC IP/FQDN: {pc_ip}", "error")
-            if pc_ip in data.get("pcs", []):
+
+            pcs_list = data.get("pcs", [])
+            existing_ips = [p.get("ip") for p in pcs_list if isinstance(p, dict)]
+            existing_names = [p.get("name", "").strip() for p in pcs_list if isinstance(p, dict)]
+            if pc_ip in existing_ips:
                 return redirect_with_msg("settings", f"PC already configured: {pc_ip}", "info")
-            data.setdefault("pcs", []).append(pc_ip)
+            if pc_name in existing_names:
+                return redirect_with_msg("settings", f"PC Name must be unique: {pc_name}", "error")
+
+            data.setdefault("pcs", []).append({"name": pc_name, "ip": pc_ip})
             save_endpoints(data)
-            return redirect_with_msg("settings", f"PC added: {pc_ip}", "success")
+            return redirect_with_msg("settings", f"PC added: {pc_name} ({pc_ip})", "success")
 
         # Add PE
         if "add_pe" in request.POST:
@@ -140,10 +158,13 @@ def settings_view(request):
         # Delete PC
         if "delete_pc" in request.POST:
             ip = request.POST.get("ip", "").strip()
-            if ip and ip in data.get("pcs", []):
-                data["pcs"].remove(ip)
-                save_endpoints(data)
-                return redirect_with_msg("settings", f"PC removed: {ip}", "success")
+            if ip:
+                pcs_list = data.get("pcs", [])
+                new_pcs = [p for p in pcs_list if isinstance(p, dict) and p.get("ip") != ip]
+                if len(new_pcs) != len(pcs_list):
+                    data["pcs"] = new_pcs
+                    save_endpoints(data)
+                    return redirect_with_msg("settings", f"PC removed: {ip}", "success")
             return redirect_with_msg("settings", f"PC not found: {ip}", "error")
 
         # Delete PE
@@ -171,7 +192,7 @@ def settings_view(request):
             return redirect_with_msg("settings", f"PE not found: {ip}", "error")
 
     # load endpoints for display
-    data = load_endpoints()
+    data = get_endpoints()
     # read optional message from querystring (used instead of Django messages)
     msg = request.GET.get("msg")
     level = request.GET.get("level", "info")

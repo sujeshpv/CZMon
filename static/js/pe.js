@@ -83,22 +83,47 @@ document.querySelectorAll('a.nav-link').forEach(link => {
     });
   }
 
+  function isDuplicatePcByIpOrName(ipVal, nameVal){
+    const table = document.getElementById('pcs-list');
+    if(!table) return { ip: false, name: false };
+    const rows = table.querySelectorAll('tbody tr[data-ip]');
+    let dupIp = false, dupName = false;
+    rows.forEach(tr => {
+      if((tr.dataset.ip || '').trim() === ipVal) dupIp = true;
+      if((tr.dataset.name || '').trim() === nameVal) dupName = true;
+    });
+    return { ip: dupIp, name: dupName };
+  }
+
   // handle add forms
   const addPcForm = document.querySelector('form button[name="add_pc"]')?.closest('form');
   const addPeForm = document.querySelector('form button[name="add_pe"]')?.closest('form');
 
   if(addPcForm){
     addPcForm.addEventListener('submit', function(e){
-      const input = addPcForm.querySelector('input[name="pc_ip"]');
-      const val = input?.value.trim() || '';
-      if(!val){
+      const nameInput = addPcForm.querySelector('input[name="pc_name"]');
+      const ipInput = addPcForm.querySelector('input[name="pc_ip"]');
+      const nameVal = (nameInput?.value || '').trim();
+      const ipVal = (ipInput?.value || '').trim();
+      if(!nameVal){
+        e.preventDefault();
+        showClientMessage('error', 'PC Name is required and cannot be blank');
+        return;
+      }
+      if(!ipVal){
         e.preventDefault();
         showClientMessage('error', 'Please provide PC Virtual IP/FQDN');
         return;
       }
-      if(isDuplicate(val, 'pcs-list')){
+      const dup = isDuplicatePcByIpOrName(ipVal, nameVal);
+      if(dup.ip){
         e.preventDefault();
-        showClientMessage('info', `PC already configured: ${val}`);
+        showClientMessage('info', `PC already configured: ${ipVal}`);
+        return;
+      }
+      if(dup.name){
+        e.preventDefault();
+        showClientMessage('error', `PC Name must be unique: ${nameVal}`);
         return;
       }
       // allow submit

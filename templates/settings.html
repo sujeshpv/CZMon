@@ -16,6 +16,11 @@
       <form method="post">
         {% csrf_token %}
         <div>
+          <label for="pc_name">PC Name</label>
+          <input id="pc_name" name="pc_name" type="text" placeholder="Unique name for this PC" required />
+        </div>
+        <br/>
+        <div>
           <label for="pc_ip">PC Virtual IP/FQDN</label>
           <input id="pc_ip" name="pc_ip" type="text" placeholder="e.g. 10.0.0.5" />
         </div>
@@ -25,20 +30,29 @@
       </form>
 
       <h4>Configured PCs</h4>
-      <ul id="pcs-list">
-        {% for ip in pcs %}
-          <li data-ip="{{ ip }}">
-            {{ ip }}
-            <form method="post" style="display:inline;margin-left:8px">
-              {% csrf_token %}
-              <input type="hidden" name="ip" value="{{ ip }}" />
-              <button type="submit" name="delete_pc" class="delete-x" title="Delete PC">✖</button>
-            </form>
-          </li>
+      <table id="pcs-list" style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr><th style="width:2em">#</th><th>PC Name</th><th>PC Virtual IP/FQDN</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for pc in pcs %}
+          <tr data-ip="{{ pc.ip }}" data-name="{{ pc.name }}">
+            <td>{{ forloop.counter }}</td>
+            <td><strong>{{ pc.name }}</strong></td>
+            <td>{{ pc.ip }}</td>
+            <td>
+              <form method="post" style="display:inline">
+                {% csrf_token %}
+                <input type="hidden" name="ip" value="{{ pc.ip }}" />
+                <button type="submit" name="delete_pc" class="delete-x" title="Delete PC">✖</button>
+              </form>
+            </td>
+          </tr>
         {% empty %}
-          <li class="muted">No PCs added</li>
+          <tr><td colspan="4" class="muted">No PCs added</td></tr>
         {% endfor %}
-      </ul>
+        </tbody>
+      </table>
     </div>
 
     <div class="card">
@@ -49,8 +63,9 @@
           <label for="pe_ip">PE Virtual IP/FQDN</label>
           <input id="pe_ip" name="pe_ip" type="text" placeholder="e.g. 10.0.0.8" />
         </div>
+        <br/>
         <div>
-          <label for="pe_name">PE Name (optional)</label>
+          <label for="pe_name">PE Name </label>
           <input id="pe_name" name="pe_name" type="text" placeholder="Friendly name for PE" />
         </div>
         <div style="margin-top:8px">
@@ -59,20 +74,29 @@
       </form>
 
       <h4>Configured PEs</h4>
-      <ul id="pes-list">
+      <table id="pes-list" style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr><th style="width:2em">#</th><th>PE Name</th><th>PE Virtual IP/FQDN</th><th></th></tr>
+        </thead>
+        <tbody>
         {% for p in pes %}
-          <li data-ip="{{ p.ip }}" data-name="{{ p.name }}">
-            {% if p.name %}<strong>{{ p.name }}</strong> — {% endif %}{{ p.ip }}
-            <form method="post" style="display:inline;margin-left:8px">
-              {% csrf_token %}
-              <input type="hidden" name="ip" value="{{ p.ip }}" />
-              <button type="submit" name="delete_pe" class="delete-x" title="Delete PE">✖</button>
-            </form>
-          </li>
+          <tr data-ip="{{ p.ip }}" data-name="{{ p.name }}">
+            <td>{{ forloop.counter }}</td>
+            <td>{% if p.name %}<strong>{{ p.name }}</strong>{% endif %}</td>
+            <td>{{ p.ip }}</td>
+            <td>
+              <form method="post" style="display:inline">
+                {% csrf_token %}
+                <input type="hidden" name="ip" value="{{ p.ip }}" />
+                <button type="submit" name="delete_pe" class="delete-x" title="Delete PE">✖</button>
+              </form>
+            </td>
+          </tr>
         {% empty %}
-          <li class="muted">No PEs added</li>
+          <tr><td colspan="4" class="muted">No PEs added</td></tr>
         {% endfor %}
-      </ul>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>

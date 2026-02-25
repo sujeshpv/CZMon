@@ -1,4 +1,58 @@
 {
-  "pcs": [],
-  "pes": []
+  "pcs": [
+    {
+      "name": "CZ_RENO_AZ01_MGMT01",
+      "ip": "10.23.71.131"
+    },
+    {
+      "name": "CZ_RENO_AZ02_MGMT01",
+      "ip": "10.23.71.193"
+    },
+    {
+      "name": "CZ_PHX_AZ03_MGMT01",
+      "ip": "10.120.222.6"
+    }
+  ],
+  "pes": [
+    {
+      "name": "CZ_RENO_AZ01_MGMT01",
+      "ip": "10.23.69.112"
+    },
+    {
+      "name": "CZ_RENO_AZ01_APPS01",
+      "ip": "10.23.69.9"
+    },
+    {
+      "name": "CZ_RENO_AZ01_APPS02",
+      "ip": "10.23.69.149"
+    },
+    {
+      "name": "CZ_RENO_AZ01_APPS03",
+      "ip": "10.23.69.179"
+    },
+    {
+      "name": "CZ_RENO_AZ01_BACKUP01",
+      "ip": "10.23.69.89"
+    },
+    {
+      "name": "CZ_RENO_AZ02_MGMT01",
+      "ip": "10.23.70.82"
+    },
+    {
+      "name": "CZ_RENO_AZ02_APPS01",
+      "ip": "10.23.70.9"
+    },
+    {
+      "name": "CZ_RENO_AZ02_APPS02",
+      "ip": "10.23.70.109"
+    },
+    {
+      "name": "CZ_RENO_AZ02_APPS03",
+      "ip": "10.23.70.129"
+    },
+    {
+      "name": "CZ_RENO_AZ02_BACKUP01",
+      "ip": "10.23.70.19"
+    }
+  ]
 }
