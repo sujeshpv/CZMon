@@ -25,6 +25,25 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+myprojectenv/
+venv/
+env/
+
+# Django static and media files (collected files)
+static/
+staticfiles/
+media/
+admin/
+css/
+js/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local settings or secrets
+.env
+db.sqlite3
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

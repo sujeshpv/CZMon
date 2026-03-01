@@ -23,9 +23,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = "django-insecure-9rrv6vcv@@)!btu*0z9gq!q^d-$z1cat2d@22ws(d#sc!fxub7"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
+STATIC_ROOT="/home/nutanix/czmonrunning/"
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+ALLOWED_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", "10.20.161.103"]
 
 
 # Application definition
