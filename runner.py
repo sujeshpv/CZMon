@@ -15,6 +15,13 @@ LOGGER = setup_logger(__name__)
 class Runner:
   """
   Runner is the entry point for the Metrics Collection Framework.
+
+  It is responsible for:
+  - Parsing command line arguments
+  - Loading configuration files
+  - Setting environment variables for PC and PE systems
+  - Launching metric collection threads
+  - Coordinating execution of the MetricsProcessor
   """
   def __init__(self):
     try:
@@ -44,6 +51,14 @@ class Runner:
 
   @EntryExit
   def parse_args(self):
+    """
+    Parse command line arguments for the metrics framework.
+
+    Supported arguments:
+    --pc-ip : Prism Central IP (required)
+    --pe-ip : Prism Element IP (optional)
+    --config : Custom metrics configuration file
+    """
     try:
       parser = argparse.ArgumentParser(
           description="Metrics Collection Framework Runner",
@@ -84,6 +99,14 @@ class Runner:
 
   @EntryExit
   def set_environment_variables(self, testbed_config):
+    """
+    Set environment variables for PC and PE systems.
+
+    Parameters
+    ----------
+    testbed_config : dict
+      Configuration containing PC and PE IP details.
+    """
     try:
       self.pc_ips.extend(v["ip"] for v in testbed_config.get("pcs", []))
       self.pe_ips.extend(v["ip"] for v in testbed_config.get("pes", []))
@@ -105,6 +128,19 @@ class Runner:
 
   @EntryExit
   def run(self):
+    """
+    Main execution workflow of the runner.
+
+    Steps performed:
+    1. Parse CLI arguments
+    2. Load testbed configuration
+    3. Set environment variables
+    4. Persist PC/PE cluster information
+    5. Load metrics configuration
+    6. Start metric collection threads
+    7. Wait for all threads to complete
+    8. Close database worker
+    """
     try:
       self.args = self.parse_args()
       testbed_config = self.api_processor.load_config(

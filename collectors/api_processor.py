@@ -13,7 +13,19 @@ LOGGER = setup_logger(__name__)
 
 
 class ApiProcessor:
+  """
+  ApiProcessor is responsible for collecting metrics from Prism
+  Central (PC) and Prism Element (PE) APIs and persisting them into
+  a SQLite database using Sqlite3Worker.
+
+  It dynamically processes API configurations, extracts required
+  values using JMESPath expressions, and stores them into tables.
+  """
   def __init__(self):
+    """
+    Initialize ApiProcessor with database worker, HTTP method
+    mappings, and system endpoint configurations.
+    """
     try:
       self.db_worker = Sqlite3Worker("metrics.db")
       self.method_map = {
@@ -40,6 +52,21 @@ class ApiProcessor:
 
   @EntryExit
   def get_base_url(self, endpoint_type, ip):
+    """
+    Build base URL for a given endpoint type and IP.
+
+    Parameters
+    ----------
+    endpoint_type : str
+      Either 'PC' or 'PE'.
+    ip : str
+      Target system IP.
+
+    Returns
+    -------
+    str
+      Base URL for API calls.
+    """
     try:
       if endpoint_type in ("PC", "PE"):
         return f"https://{ip}:9440"
@@ -60,6 +87,21 @@ class ApiProcessor:
 
   @EntryExit
   def extract_values(self, response, value_paths):
+    """
+    Extract required values from API response using JMESPath.
+
+    Parameters
+    ----------
+    response : dict
+      API response JSON.
+    value_paths : list
+      List of JMESPath expressions.
+
+    Returns
+    -------
+    dict
+      Extracted values mapped to their paths.
+    """
     try:
       extracted = {}
       for path in value_paths:
@@ -76,6 +118,15 @@ class ApiProcessor:
 
   @EntryExit
   def process_data(self, config):
+    """
+    Process API configuration and persist extracted values into database.
+
+    Parameters
+    ----------
+    config : dict
+      Configuration describing API endpoints, methods, and
+      JMESPath expressions for extracting values.
+    """
     try:
       for table_name, entity_data in config.items():
         endpoint_type = entity_data.get("endpoint_type")
@@ -135,6 +186,19 @@ class ApiProcessor:
 
   @EntryExit
   def load_config(self, config_path):
+    """
+    Load metrics configuration from JSON file.
+
+    Parameters
+    ----------
+    config_path : str
+      Path to configuration JSON file.
+
+    Returns
+    -------
+    dict
+      Parsed configuration.
+    """
     try:
       with open(config_path, "r") as f:
         return json.load(f)
@@ -149,6 +213,12 @@ class ApiProcessor:
 
   @EntryExit
   def persist_pc_pe_info_to_db(self):
+    """
+    Collect cluster information from PC and PE systems
+    and store them in the database.
+
+    Ensures duplicate UUIDs are not inserted.
+    """
     try:
       systems = {
           "PE": {
@@ -231,6 +301,11 @@ class ApiProcessor:
       raise error
 
   def fetch_dynamic_values(self, data):
+    """
+    Recursively resolve dynamic values inside a JSON structure.
+    Looks for patterns like $(table#column#filter=value)
+    and replaces them with DB values.
+    """
     try:
       if isinstance(data, dict):
         return {k: self.fetch_dynamic_values(v) for k, v in data.items()}

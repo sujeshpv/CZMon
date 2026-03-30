@@ -1,3 +1,5 @@
+"""Thread safe sqlite3 interface."""
+
 from datetime import datetime, timezone
 from common.logger.logger import EntryExit, setup_logger
 from common.exceptions.exceptions import *
@@ -17,11 +19,36 @@ LOG = setup_logger(__name__)
 class Sqlite3Worker(threading.Thread):
   """
   Thread-safe SQLite worker that processes database queries asynchronously.
-  """
 
+  This worker uses a queue-based architecture where SQL queries are pushed
+  into a queue and executed sequentially by a dedicated background thread.
+  It supports both read and write operations while maintaining thread safety.
+
+  Attributes
+  ----------
+  sqlite3_conn : sqlite3.Connection
+    SQLite database connection.
+  sqlite3_cursor : sqlite3.Cursor
+    Cursor used to execute queries.
+  sql_queue : Queue
+    Queue holding pending SQL operations.
+  results : dict
+    Stores results of SELECT queries keyed by token.
+  exit_set : bool
+    Flag to terminate worker thread.
+  exit_token : str
+    Special token used to signal worker shutdown.
+  """
   def __init__(self, file_name, max_queue_size=100):
     """
     Initialize the SQLite worker thread.
+
+    Parameters
+    ----------
+    file_name : str
+    SQLite database file path.
+    max_queue_size : int, optional
+    Maximum size of the SQL queue.
     """
     try:
       threading.Thread.__init__(self)
@@ -52,6 +79,9 @@ class Sqlite3Worker(threading.Thread):
   def run(self):
     """
     Worker thread loop.
+
+    Continuously processes SQL queries from the queue and commits
+    transactions periodically or when the queue becomes empty.
     """
     try:
       LOG.info("SQLite worker thread started")
@@ -80,6 +110,15 @@ class Sqlite3Worker(threading.Thread):
   def run_query(self, token, query, values):
     """
     Execute a single SQL query.
+
+    Parameters
+    ----------
+    token : str
+        Unique identifier used to map results for SELECT queries.
+    query : str
+        SQL query string.
+    values : list
+        Values for parameterized query.
     """
     try:
       if query.lower().strip().startswith(("select", "pragma")):
@@ -119,6 +158,18 @@ class Sqlite3Worker(threading.Thread):
   def execute(self, query, values=None):
     """
     Queue a SQL query for execution.
+
+    Parameters
+    ----------
+    query : str
+        SQL query to execute.
+    values : list, optional
+        Parameter values for the query.
+
+    Returns
+    -------
+    list or None
+        Query results for SELECT statements.
     """
     try:
       if self.exit_set:
@@ -142,6 +193,16 @@ class Sqlite3Worker(threading.Thread):
   def query_results(self, token):
     """
     Wait and return results for a SELECT query.
+
+    Parameters
+    ----------
+    token : str
+        Token associated with query result.
+
+    Returns
+    -------
+    list
+        Query results.
     """
     try:
       delay = 0.001
@@ -183,6 +244,10 @@ class Sqlite3Worker(threading.Thread):
   def queue_size(self):
     """
     Return the current size of the SQL queue.
+
+    Returns
+    -------
+    int
     """
     try:
       return self.sql_queue.qsize()
@@ -194,7 +259,15 @@ class Sqlite3Worker(threading.Thread):
   @EntryExit
   def table_exists(self, table_name):
     """
-    Check whether a table exists.
+    Check whether a table exists in the database.
+
+    Parameters
+    ----------
+    table_name : str
+
+    Returns
+    -------
+    bool
     """
     try:
       query = """
@@ -214,6 +287,17 @@ class Sqlite3Worker(threading.Thread):
 
   @EntryExit
   def get_columns(self, table_name):
+    """
+    Retrieve column names for a given table.
+
+    Parameters
+    ----------
+    table_name : str
+
+    Returns
+    -------
+    list
+    """
     try:
       query = f"PRAGMA table_info({table_name})"
       result = self.execute(query)
@@ -229,6 +313,13 @@ class Sqlite3Worker(threading.Thread):
 
   @EntryExit
   def create_table(self, table_name):
+    """
+    Create a table if it does not exist.
+
+    Parameters
+    ----------
+    table_name : str
+    """
     try:
       query = f"""
       CREATE TABLE IF NOT EXISTS {table_name} (
@@ -248,6 +339,14 @@ class Sqlite3Worker(threading.Thread):
 
   @EntryExit
   def add_column(self, table_name, column_name):
+    """
+    Add a column to an existing table.
+
+    Parameters
+    ----------
+    table_name : str
+    column_name : str
+    """
     try:
       query = f"""
       ALTER TABLE {table_name}
@@ -266,6 +365,15 @@ class Sqlite3Worker(threading.Thread):
 
   @EntryExit
   def ensure_schema(self, table_name, values):
+    """
+    Ensure table schema contains required columns.
+
+    Parameters
+    ----------
+    table_name : str
+    values : dict
+      Dictionary containing column names to ensure.
+    """
     try:
       if not self.table_exists(table_name):
         self.create_table(table_name)
@@ -286,6 +394,14 @@ class Sqlite3Worker(threading.Thread):
 
   @EntryExit
   def insert_row(self, table_name, values):
+    """
+    Insert a row into the specified table.
+
+    Parameters
+    ----------
+    table_name : str
+    values : dict
+    """
     try:
       cleaned_values = {
         key.split(".")[-1]: value for key, value in values.items()
@@ -311,6 +427,18 @@ class Sqlite3Worker(threading.Thread):
 
   @EntryExit
   def get_column_values(self, table_name, column_name):
+    """
+    Retrieve all values from a specific column.
+
+    Parameters
+    ----------
+    table_name : str
+    column_name : str
+
+    Returns
+    -------
+    list
+    """
     try:
       query = f"SELECT {column_name} FROM {table_name}"
       result = self.execute(query)
@@ -325,6 +453,9 @@ class Sqlite3Worker(threading.Thread):
       return []
 
   def export_schema(self):
+    """
+    exports a schema.sql
+    """
     try:
       with open("library/schema.sql", "w") as f:
         for line in self.sqlite3_conn.iterdump():

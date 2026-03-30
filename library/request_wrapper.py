@@ -17,6 +17,16 @@ LOGGER = logging.getLogger(__name__)
 class APICRUD:
   """
   Generic reusable REST API CRUD client.
+
+  This class wraps the Python requests library and provides
+  simplified methods for performing CRUD operations against
+  REST APIs.
+
+  Supported operations:
+  - Create (POST)
+  - Read (GET)
+  - Update (PUT / PATCH)
+  - Delete (DELETE)
   """
   def __init__(
     self,
@@ -28,6 +38,19 @@ class APICRUD:
   ):
     """
     Initialize the API client.
+
+    Parameters
+    ----------
+    base_url : str
+        Base URL of the target API server.
+    headers : dict, optional
+        HTTP headers for requests.
+    auth : tuple, optional
+        Authentication tuple (username, password).
+    timeout : int
+        Request timeout in seconds.
+    verify_ssl : bool
+        Whether to verify SSL certificates.
     """
     try:
       self.base_url = base_url.rstrip("/")
@@ -56,6 +79,22 @@ class APICRUD:
   ) -> Any:
     """
     Internal request handler used by CRUD operations.
+
+    Parameters
+    ----------
+    method : str
+        HTTP method (GET, POST, PUT, PATCH, DELETE).
+    endpoint : str
+        API endpoint path.
+    expected_status : list, optional
+        List of acceptable HTTP response codes.
+    **kwargs :
+        Additional arguments passed to requests.request().
+
+    Returns
+    -------
+    Any
+        Parsed JSON response or raw text if JSON parsing fails.
     """
     url = f"{self.base_url}/{endpoint.lstrip('/')}"
     try:
@@ -122,6 +161,18 @@ class APICRUD:
   def create(self, endpoint: str, data: Dict[str, Any]) -> Any:
     """
     Send a POST request to create a resource.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+    data : dict
+        JSON payload for the POST request.
+
+    Returns
+    -------
+    Any
+        API response.
     """
     try:
       return self._request(
@@ -148,6 +199,18 @@ class APICRUD:
   ) -> Any:
     """
     Send a GET request to retrieve resources.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+    params : dict, optional
+        Query parameters.
+
+    Returns
+    -------
+    Any
+        API response.
     """
     try:
       return self._request(
@@ -175,6 +238,20 @@ class APICRUD:
   ) -> Any:
     """
     Update an existing resource.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+    data : dict
+        JSON payload.
+    method : str
+        HTTP method to use (PUT or PATCH).
+
+    Returns
+    -------
+    Any
+        API response.
     """
     try:
       return self._request(
@@ -200,6 +277,16 @@ class APICRUD:
   def delete(self, endpoint: str) -> Any:
     """
     Send a DELETE request to remove a resource.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+
+    Returns
+    -------
+    Any
+        API response.
     """
     try:
       return self._request(

@@ -10,11 +10,20 @@ def setup_logger(name):
   """
   Configure and return a logger instance.
 
-  Features:
-  - Console logging (DEBUG, INFO, WARNING, ERROR)
-  - Rotating file logging
-  - Separate FATAL log file (ERROR)
-  - Proper handler reuse fix
+  This logger supports:
+  - Console logging for DEBUG, INFO, and ERROR levels
+  - Rotating file logging with a maximum size of 10MB
+  - Timestamped log file names
+
+  Parameters
+  ----------
+  name : str
+    Name of the logger (usually __name__ of the module)
+
+  Returns
+  -------
+  logging.Logger
+    Configured logger instance
   """
   try:
     logger = logging.getLogger(name)
@@ -81,7 +90,25 @@ LOGGER = setup_logger(__name__)
 
 def EntryExit(func):
   """
-  Decorator to log function entry, exit, execution time, and errors.
+  Decorator used to automatically log function entry,
+  exit, execution time, and errors.
+
+  It logs:
+    - Function name
+    - Arguments
+    - Execution time
+    - Return value
+    - Stack trace if an exception occurs
+
+  Parameters
+  ----------
+  func : function
+  Function to wrap with logging.
+
+  Returns
+  -------
+  function
+    Wrapped function with entry/exit logging.
   """
   @functools.wraps(func)
   def wrapper(*args, **kwargs):
