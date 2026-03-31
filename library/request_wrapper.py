@@ -1,0 +1,324 @@
+"""
+Generic REST API CRUD utility.
+Provides create, read, update, delete operations.
+"""
+
+from typing import Dict, Any, Optional, List
+from common.exceptions.exceptions import *
+import requests
+import logging
+import urllib3
+import os
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+LOGGER = logging.getLogger(__name__)
+
+
+class APICRUD:
+  """
+  Generic reusable REST API CRUD client.
+
+  This class wraps the Python requests library and provides
+  simplified methods for performing CRUD operations against
+  REST APIs.
+
+  Supported operations:
+  - Create (POST)
+  - Read (GET)
+  - Update (PUT / PATCH)
+  - Delete (DELETE)
+  """
+  def __init__(
+    self,
+    base_url: str,
+    testbed_config: dict,
+    headers: Optional[Dict[str, str]] = None,
+    auth: Optional[tuple] = None,
+    timeout: int = 10,
+    verify_ssl: bool = False,
+  ):
+    """
+    Initialize the API client.
+
+    Parameters
+    ----------
+    base_url : str
+        Base URL of the target API server.
+    headers : dict, optional
+        HTTP headers for requests.
+    auth : tuple, optional
+        Authentication tuple (username, password).
+    timeout : int
+        Request timeout in seconds.
+    verify_ssl : bool
+        Whether to verify SSL certificates.
+    """
+    try:
+      self.base_url = base_url.rstrip("/")
+      self.headers = headers or {"Content-Type": "application/json"}
+      ip = self.base_url.split(':')[1].strip("/")
+      match = next(
+          (val for values in testbed_config.values() for val in values if val['ip'] == ip),
+          None
+      )
+      if match:
+          user = match['user']
+          password = match['password']
+      else:
+          error = CZMonError(
+              "Failed fetching the credentials"
+              "please provide credentials in the endpoints.json",
+              cause="please provide credentials in the endpoints.json",
+              context={}
+          )
+          LOGGER.error(error)
+          raise error
+      self.auth = (
+        user,
+        password
+      )
+      self.timeout = timeout
+      self.verify_ssl = verify_ssl
+    except Exception as err:
+      error = CZMonError(
+        "Failed initializing APICRUD client",
+        cause=err,
+        context={"base_url": base_url}
+      )
+      LOGGER.error(error)
+      raise error
+
+  def _request(
+      self,
+      method: str,
+      endpoint: str,
+      expected_status: Optional[List[int]] = None,
+      **kwargs
+  ) -> Any:
+    """
+    Internal request handler used by CRUD operations.
+
+    Parameters
+    ----------
+    method : str
+        HTTP method (GET, POST, PUT, PATCH, DELETE).
+    endpoint : str
+        API endpoint path.
+    expected_status : list, optional
+        List of acceptable HTTP response codes.
+    **kwargs :
+        Additional arguments passed to requests.request().
+
+    Returns
+    -------
+    Any
+        Parsed JSON response or raw text if JSON parsing fails.
+    """
+    url = f"{self.base_url}/{endpoint.lstrip('/')}"
+    try:
+      response = requests.request(
+        method=method,
+        url=url,
+        headers=self.headers,
+        auth=self.auth,
+        timeout=self.timeout,
+        verify=self.verify_ssl,
+        **kwargs
+      )
+      LOGGER.info(
+        "API CALL | method=%s url=%s status=%s",
+        method,
+        url,
+        response.status_code
+      )
+      if expected_status and response.status_code not in expected_status:
+        error = CZMonError(
+          "Unexpected API status code",
+          context={
+            "method": method,
+            "url": url,
+            "expected": expected_status,
+            "actual": response.status_code,
+            "response": response.text,
+          }
+        )
+        LOGGER.error(error)
+        raise error
+      if response.text:
+        try:
+          return response.json()
+        except ValueError:
+          LOGGER.debug("Response is not JSON, returning raw text")
+          return response.text
+      return None
+    except requests.exceptions.RequestException as err:
+      error = CZMonError(
+        "API request failed",
+        cause=err,
+        context={
+          "method": method,
+          "url": url,
+        }
+      )
+      LOGGER.error(error)
+      raise error
+    except Exception as err:
+      if isinstance(err, CZMonError):
+        raise
+      error = CZMonError(
+        "Unexpected error during API request",
+        cause=err,
+        context={
+          "method": method,
+          "url": url,
+        }
+      )
+      LOGGER.error(error)
+      raise error
+
+  def create(self, endpoint: str, data: Dict[str, Any]) -> Any:
+    """
+    Send a POST request to create a resource.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+    data : dict
+        JSON payload for the POST request.
+
+    Returns
+    -------
+    Any
+        API response.
+    """
+    try:
+      return self._request(
+        "POST",
+        endpoint,
+        json=data,
+        expected_status=[200, 201]
+      )
+    except Exception as err:
+      if isinstance(err, CZMonError):
+        raise
+      error = CZMonError(
+        "Create request failed",
+        cause=err,
+        context={"endpoint": endpoint}
+      )
+      LOGGER.error(error)
+      raise error
+
+  def read(
+      self,
+      endpoint: str,
+      params: Optional[Dict[str, Any]] = None
+  ) -> Any:
+    """
+    Send a GET request to retrieve resources.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+    params : dict, optional
+        Query parameters.
+
+    Returns
+    -------
+    Any
+        API response.
+    """
+    try:
+      return self._request(
+        "GET",
+        endpoint,
+        params=params,
+        expected_status=[200]
+      )
+    except Exception as err:
+      if isinstance(err, CZMonError):
+        raise
+      error = CZMonError(
+        "Read request failed",
+        cause=err,
+        context={"endpoint": endpoint}
+      )
+      LOGGER.error(error)
+      raise error
+
+  def update(
+      self,
+      endpoint: str,
+      data: Dict[str, Any],
+      method: str = "PUT"
+  ) -> Any:
+    """
+    Update an existing resource.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+    data : dict
+        JSON payload.
+    method : str
+        HTTP method to use (PUT or PATCH).
+
+    Returns
+    -------
+    Any
+        API response.
+    """
+    try:
+      return self._request(
+        method,
+        endpoint,
+        json=data,
+        expected_status=[200, 204]
+      )
+    except Exception as err:
+      if isinstance(err, CZMonError):
+        raise
+      error = CZMonError(
+        "Update request failed",
+        cause=err,
+        context={
+          "endpoint": endpoint,
+          "method": method
+        }
+      )
+      LOGGER.error(error)
+      raise error
+
+  def delete(self, endpoint: str) -> Any:
+    """
+    Send a DELETE request to remove a resource.
+
+    Parameters
+    ----------
+    endpoint : str
+        API endpoint.
+
+    Returns
+    -------
+    Any
+        API response.
+    """
+    try:
+      return self._request(
+        "DELETE",
+        endpoint,
+        expected_status=[200, 202, 204]
+      )
+    except Exception as err:
+      if isinstance(err, CZMonError):
+        raise
+      error = CZMonError(
+        "Delete request failed",
+        cause=err,
+        context={"endpoint": endpoint}
+      )
+      LOGGER.error(error)
+      raise error
