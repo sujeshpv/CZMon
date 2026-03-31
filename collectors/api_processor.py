@@ -117,7 +117,7 @@ class ApiProcessor:
       raise error
 
   @EntryExit
-  def process_data(self, config):
+  def process_data(self, config, testbed_config):
     """
     Process API configuration and persist extracted values into database.
 
@@ -147,7 +147,7 @@ class ApiProcessor:
         for ip in ips:
           try:
             base_url = self.get_base_url(endpoint_type, ip)
-            api = APICRUD(base_url)
+            api = APICRUD(base_url, testbed_config)
             crud_method = getattr(api, self.method_map[method])
             kwargs = {}
             if params:
@@ -212,7 +212,7 @@ class ApiProcessor:
       raise error
 
   @EntryExit
-  def persist_pc_pe_info_to_db(self):
+  def persist_pc_pe_info_to_db(self, testbed_config):
     """
     Collect cluster information from PC and PE systems
     and store them in the database.
@@ -235,7 +235,7 @@ class ApiProcessor:
         for ip in config["ips"]:
           try:
             base_url = self.get_base_url(system, ip)
-            api = APICRUD(base_url)
+            api = APICRUD(base_url, testbed_config=testbed_config)
             if system == "PE":
               api_response = api.read(endpoint=config["endpoint"])
               for entity in api_response.get("entities"):

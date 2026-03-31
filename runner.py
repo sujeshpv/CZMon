@@ -12,6 +12,7 @@ import time
 
 LOGGER = setup_logger(__name__)
 
+
 class Runner:
   """
   Runner is the entry point for the Metrics Collection Framework.
@@ -65,23 +66,6 @@ class Runner:
           formatter_class=argparse.RawDescriptionHelpFormatter
       )
       parser.add_argument(
-          "--ui_username",
-          default="",
-          help="PC/PE UI username",
-          required=True
-      )
-      parser.add_argument(
-          "--ui_password",
-          default="",
-          help="PC/PE UI password",
-          required=True
-      )
-      parser.add_argument(
-          "--config",
-          default="api_metrics_catalog.json",
-          help="Metrics config file"
-      )
-      parser.add_argument(
           "--run-type",
           help="Run type must be either 'api' or 'cli'",
           required=True,
@@ -114,8 +98,6 @@ class Runner:
         os.environ["PC_IPS"] = ",".join(self.pc_ips)
       if self.pe_ips:
         os.environ["PE_IPS"] = ",".join(self.pe_ips)
-      os.environ["UI_USERNAME"] = self.args.ui_username
-      os.environ["UI_PASSWORD"] = self.args.ui_password
       LOGGER.info("Environment variables set")
     except Exception as err:
       error = CZMonError(
@@ -147,7 +129,7 @@ class Runner:
           self.endpoint_config
       )
       self.set_environment_variables(testbed_config)
-      self.api_processor.persist_pc_pe_info_to_db()
+      self.api_processor.persist_pc_pe_info_to_db(testbed_config)
       metric_config = self.api_processor.load_config(
           self.api_config
       )
@@ -172,12 +154,13 @@ class Runner:
       if self.args.run_type == API:
         for table_name, table_config in dynamic_value_config.items():
           config_chunk = {table_name: table_config}
-          thread = threading.Thread(
-              target=self.api_processor.process_data,
-              args=(config_chunk,)
-          )
-          thread.start()
-          threads.append(thread)
+          # thread = threading.Thread(
+          #     target=self.api_processor.process_data,
+          #     args=(config_chunk, testbed_config)
+          # )
+          self.api_processor.process_data(config_chunk, testbed_config)
+          # thread.start()
+          # threads.append(thread)
       for thread in threads:
         thread.join()
       LOGGER.info("All metric processing threads completed")

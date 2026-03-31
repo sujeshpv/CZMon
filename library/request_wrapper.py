@@ -31,6 +31,7 @@ class APICRUD:
   def __init__(
     self,
     base_url: str,
+    testbed_config: dict,
     headers: Optional[Dict[str, str]] = None,
     auth: Optional[tuple] = None,
     timeout: int = 10,
@@ -55,9 +56,26 @@ class APICRUD:
     try:
       self.base_url = base_url.rstrip("/")
       self.headers = headers or {"Content-Type": "application/json"}
+      ip = self.base_url.split(':')[1].strip("/")
+      match = next(
+          (val for values in testbed_config.values() for val in values if val['ip'] == ip),
+          None
+      )
+      if match:
+          user = match['user']
+          password = match['password']
+      else:
+          error = CZMonError(
+              "Failed fetching the credentials"
+              "please provide credentials in the endpoints.json",
+              cause="please provide credentials in the endpoints.json",
+              context={}
+          )
+          LOGGER.error(error)
+          raise error
       self.auth = (
-        os.environ.get("UI_USERNAME"),
-        os.environ.get("UI_PASSWORD")
+        user,
+        password
       )
       self.timeout = timeout
       self.verify_ssl = verify_ssl

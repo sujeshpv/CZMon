@@ -4,6 +4,7 @@ import logging
 import functools
 import time
 import traceback
+import os
 
 
 def setup_logger(name):
@@ -53,7 +54,10 @@ def setup_logger(name):
     # Main File Handler
     # -------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = f"metrics_framework_{timestamp}.log"
+    log_file = os.path.join(
+        "logs",
+        f"metrics_framework_{timestamp}.log"
+    )
     file_handler = RotatingFileHandler(
       log_file,
       maxBytes=10 * 1024 * 1024,
@@ -64,7 +68,10 @@ def setup_logger(name):
     # -------------------------
     # FATAL File Handler
     # -------------------------
-    fatal_file = f"metrics_fatal_{timestamp}.log"
+    fatal_file = os.path.join(
+        "logs",
+        f"metrics_fatal_{timestamp}.log"
+    )
     fatal_handler = RotatingFileHandler(
       fatal_file,
       maxBytes=10 * 1024 * 1024,
