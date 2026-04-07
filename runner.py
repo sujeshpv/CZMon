@@ -154,13 +154,12 @@ class Runner:
       if self.args.run_type == API:
         for table_name, table_config in dynamic_value_config.items():
           config_chunk = {table_name: table_config}
-          # thread = threading.Thread(
-          #     target=self.api_processor.process_data,
-          #     args=(config_chunk, testbed_config)
-          # )
-          self.api_processor.process_data(config_chunk, testbed_config)
-          # thread.start()
-          # threads.append(thread)
+          thread = threading.Thread(
+              target=self.api_processor.process_data,
+              args=(config_chunk, testbed_config)
+          )
+          thread.start()
+          threads.append(thread)
       for thread in threads:
         thread.join()
       LOGGER.info("All metric processing threads completed")

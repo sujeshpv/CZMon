@@ -50,12 +50,14 @@ def setup_logger(name):
         )
     console_handler.addFilter(ConsoleFilter())
     console_handler.setFormatter(formatter)
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True)
     # -------------------------
     # Main File Handler
     # -------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = os.path.join(
-        "logs",
+        log_dir,
         f"metrics_framework_{timestamp}.log"
     )
     file_handler = RotatingFileHandler(

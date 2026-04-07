@@ -54,10 +54,14 @@ class CliProcessor:
             for command in commands:
               try:
                 values = {}
-                output = ssh_obj.execute(command)
+                full_command = (f"bash -lc 'for i in $(svmips); "
+                                f"do echo \"================== $i "
+                                f"=================\"; ssh $i "
+                                f"{command}; done'")
+                output = ssh_obj.execute(full_command)
                 LOGGER.info(
                   "Output for command '%s' on %s: %s",
-                  command, ip, output
+                  full_command, ip, output
                 )
                 values["command"] = command
                 values["output"] = output
