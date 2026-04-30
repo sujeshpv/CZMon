@@ -27,7 +27,9 @@ class ApiProcessor:
     mappings, and system endpoint configurations.
     """
     try:
-      self.db_worker = Sqlite3Worker("metrics.db")
+      base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+      db_path = os.path.join(base_dir, "metrics.db")
+      self.db_worker = Sqlite3Worker(db_path)
       self.method_map = {
           "GET": "read",
           "POST": "create",
@@ -90,24 +92,44 @@ class ApiProcessor:
     """
     Extract required values from API response using JMESPath.
 
+    Each entry in value_paths may be either:
+      - a plain string: the JMESPath expression doubles as the column name.
+      - a dict {"alias": <column_name>, "path": <jmespath>}: the alias is used
+        as the column name, so Prism keys that contain dots (e.g. usage_stats.
+        "storage.snapshot_reclaimable_bytes") can be retrieved without leaking
+        quoted JMESPath syntax into the DB schema.
+
     Parameters
     ----------
     response : dict
       API response JSON.
     value_paths : list
-      List of JMESPath expressions.
+      List of JMESPath expressions (str) or {alias, path} dicts.
 
     Returns
     -------
     dict
-      Extracted values mapped to their paths.
+      Extracted values mapped to their alias (or path, for plain-string entries).
     """
     try:
       extracted = {}
-      for path in value_paths:
-        extracted[path] = jmespath.search(path, response)
+      for entry in value_paths:
+        if isinstance(entry, dict):
+          alias = entry.get("alias")
+          path = entry.get("path")
+          if not alias or not path:
+            raise CZMonError(
+              "value_paths dict entries must contain non-empty 'alias' and 'path'",
+              context={"entry": entry}
+            )
+        else:
+          alias = entry
+          path = entry
+        extracted[alias] = jmespath.search(path, response)
       return extracted
     except Exception as err:
+      if isinstance(err, CZMonError):
+        raise
       error = CZMonError(
         "Failed extracting values",
         cause=err,
@@ -261,15 +283,19 @@ class ApiProcessor:
                   endpoint=config["endpoint"],
                   data={"kind": "cluster"}
               )
+              output = {"pe_ips": []}
               for entity in api_response["entities"]:
                 try:
+                  if AOS in entity["status"]["resources"]["config"]["service_list"]:
+                    output["pe_ips"].append(str(entity["status"]["resources"]["network"]["external_ip"]))
                   if PRISM_CENTRAL in entity["status"]["resources"]["config"]["service_list"]:
-                    output = {
+                    output.update({
                       "uuid": entity["metadata"]["uuid"],
                       "name": entity["status"]["name"],
                       "clusterExternalIPAddress": entity["status"]["resources"]["network"]["external_ip"],
                       "fullVersion": entity["status"]["resources"]["config"]["build"]["full_version"],
-                    }
+                      "pe_ips": ",".join(output["pe_ips"]),
+                    })
                     existing_uuids = set(
                       self.db_worker.get_column_values(CLUSTER, "uuid")
                     )

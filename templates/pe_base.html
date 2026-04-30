@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>CZ Mon - Mock</title>
-  <link rel="stylesheet" href="{% static 'css/pe.css' %}">
+  <link rel="stylesheet" href="{% static 'css/pe.css' %}?v=20260429h">
 </head>
 <body>
   <div class="topbar">
@@ -20,7 +20,7 @@
         <a class="active" href="/">Dashboard</a>
         <a href="#" data-url="http://10.23.71.141/bugs/cluster_reports/cluster_analysis_report.html" class="nav-link">Cluster Health</a>
         <a href="http://10.20.151.170:3000/" target="_blank">CPU & Memory</a>
-        <a href="#">Stats</a>
+        <a href="{% url 'cluster_metrics' %}">Cluster Metrics</a>
         <a href="{% url 'settings' %}">Settings</a>
       </nav>
     </aside>
@@ -28,6 +28,6 @@
       {% block content %}{% endblock %}
     </main>
   </div>
-  <script src="{% static 'js/pe.js' %}"></script>
+  <script src="{% static 'js/pe.js' %}?v=20260429i"></script>
 </body>
 </html>

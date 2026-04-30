@@ -57,10 +57,9 @@ class APICRUD:
       self.base_url = base_url.rstrip("/")
       self.headers = headers or {"Content-Type": "application/json"}
       ip = self.base_url.split(':')[1].strip("/")
-      match = next(
-          (val for values in testbed_config.values() for val in values if val['ip'] == ip),
-          None
-      )
+      credential_entries = (testbed_config.get("pcs", []) + [pe for pc in testbed_config.get("pcs", []) 
+      for pe in pc.get("pes", [])] + testbed_config.get("pes", [])) if ("pcs" in testbed_config or "pes" in testbed_config) else [entry for entries in testbed_config.values() for entry in entries if entry.get("type", "").upper() in {"PC", "PE"}]
+      match = next((val for val in credential_entries if str(val.get("ip") or "").strip() == ip), None)
       if match:
           user = match['user']
           password = match['password']

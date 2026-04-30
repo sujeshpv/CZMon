@@ -51,3 +51,156 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid #e6e9ee}
 .messages li.success{background:#ecfdf5;color:#065f46;border:1px solid #bbf7d0}
 .messages li.error{background:#fee2e2;color:#7f1d1d;border:1px solid #fecaca}
 .messages li.info{background:#f1f5f9;color:#0f172a;border:1px solid #e2e8f0}
+
+/* Dashboard filter chips */
+.dashboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.chip-wrap{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{display:inline-block;padding:4px 8px;border-radius:999px;background:#f1f5f9;border:1px solid #dbe2ea;font-size:0.88rem}
+@media (max-width:900px){.dashboard-grid{grid-template-columns:1fr}}
+
+/* Dashboard filter dropdown styles */
+.filter-field select{width:100%;margin-top:8px;padding:8px 10px;border:1px solid #dbe2ea;border-radius:6px;background:#fff}
+.filter-field select:disabled{background:#f8fafc;color:#94a3b8}
+.filter-field input{width:100%;margin-top:8px;padding:8px 10px;border:1px solid #dbe2ea;border-radius:6px;background:#fff;box-sizing:border-box}
+.custom-date-grid{display:grid;grid-template-columns:minmax(220px,320px) minmax(220px,320px);gap:12px;justify-content:start}
+@media (max-width:900px){.custom-date-grid{grid-template-columns:1fr}}
+
+/* PE partition overview */
+.pe-partition-layout{display:flex;gap:20px;align-items:flex-start;margin-top:12px}
+.pe-partition-donut{
+  width:180px;
+  height:180px;
+  border-radius:50%;
+  background:#eef2f7;
+  position:relative;
+  flex:0 0 180px;
+}
+.pe-partition-donut::after{
+  content:"";
+  position:absolute;
+  inset:36px;
+  border-radius:50%;
+  background:#fff;
+  box-shadow:inset 0 0 0 1px #e5e7eb;
+}
+.pe-partition-donut span{
+  position:absolute;
+  top:50%;
+  left:50%;
+  transform:translate(-50%, -50%);
+  z-index:1;
+  font-weight:600;
+  color:#374151;
+}
+.pe-partition-list{
+  flex:1;
+  max-height:190px;
+  overflow:auto;
+  border:1px solid #e5e7eb;
+  border-radius:8px;
+  background:#fff;
+}
+.pe-partition-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border-bottom:1px solid #f1f5f9;
+}
+.pe-partition-row:last-child{border-bottom:none}
+.pe-partition-dot{
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  flex:0 0 10px;
+}
+.pe-partition-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pe-partition-value{font-weight:600;color:#111827}
+@media (max-width:900px){
+  .pe-partition-layout{flex-direction:column}
+}
+
+/* PE partition time-series chart */
+.pe-partition-trend-wrap{
+  border:1px solid #e5e7eb;
+  border-radius:8px;
+  background:#fff;
+  padding:8px;
+  position:relative;
+  overflow-x:auto;
+  overflow-y:hidden;
+}
+#pe-partition-trend-chart{
+  width:100%;
+  height:280px;
+  display:block;
+}
+#pe-partition-trend-empty{
+  padding:8px 4px;
+}
+.pe-partition-legend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  padding:8px 2px 4px 2px;
+  border-top:1px solid #f1f5f9;
+}
+.pe-partition-legend-item{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:0.9rem;
+}
+.pe-partition-legend-dot{
+  width:10px;
+  height:10px;
+  border-radius:50%;
+}
+.pe-partition-hover{
+  position:absolute;
+  display:none;
+  z-index:5;
+  min-width:420px;
+  max-width:min(900px, 92vw);
+  max-height:min(680px, 88vh);
+  overflow:auto;
+  background:#0f172a;
+  color:#e2e8f0;
+  border:1px solid #334155;
+  border-radius:8px;
+  padding:10px;
+  box-shadow:0 10px 24px rgba(2,6,23,0.35);
+  font-size:12px;
+}
+.pe-partition-hover h4{
+  margin:0 0 6px 0;
+  font-size:12px;
+  color:#f8fafc;
+}
+.pe-partition-hover table{
+  width:100%;
+  border-collapse:collapse;
+  table-layout:fixed;
+}
+.pe-partition-hover th,
+.pe-partition-hover td{
+  padding:2px 4px;
+  text-align:left;
+  font-size:11px;
+  border-bottom:1px solid #1e293b;
+}
+.pe-partition-hover thead th{
+  position:sticky;
+  top:0;
+  background:#0f172a;
+  z-index:1;
+}
+.pe-partition-hover th:last-child,
+.pe-partition-hover td:last-child{
+  text-align:right;
+  white-space:nowrap;
+}
+.pe-partition-hover td:first-child{
+  white-space:normal;
+  word-break:break-all;
+}
