@@ -1,0 +1,86 @@
+{% extends "pe_base.html" %}
+
+{% block content %}
+<div class="toprow">
+  <h2>Cluster Metrics</h2>
+  <div class="muted right">Last updated: just now</div>
+</div>
+
+{{ az_to_pcs|json_script:"az-to-pcs-data" }}
+{{ az_to_entities|json_script:"az-to-entities-data" }}
+{{ pc_to_pes|json_script:"pc-to-pes-data" }}
+{{ pc_to_clusters|json_script:"pc-to-clusters-data" }}
+{{ all_clusters|json_script:"all-clusters-data" }}
+{{ all_pes|json_script:"all-pes-data" }}
+{{ entities|json_script:"all-entities-data" }}
+{{ entity_kind_map|json_script:"entity-kind-map-data" }}
+
+<div class="card mb16">
+  <h3>Cluster Metrics</h3>
+  <div class="dashboard-grid">
+    <div class="filter-field">
+      <div class="muted">AZ</div>
+      <select id="az-select">
+        <option value="">Select AZ</option>
+        {% for az in azs %}
+          <option value="{{ az }}">{{ az }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <div class="muted">Cluster</div>
+      <select id="entity-select">
+        <option value="">Select Cluster</option>
+        {% for entity in entities %}
+          <option value="{{ entity }}">{{ entity }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <div class="muted">SVMs</div>
+      <select id="node-select">
+        <option value="">All SVMIPs</option>
+      </select>
+    </div>
+    <div class="filter-field">
+      <div class="muted">Partition</div>
+      <select id="partition-select">
+        <option value="">All Partitions</option>
+      </select>
+    </div>
+    <div class="filter-field">
+      <div class="muted">Time Range</div>
+      <select id="cluster-time-range-select">
+        <option value="1h">Last 1 Hour</option>
+        <option value="2h">Last 2 Hours</option>
+        <option value="1d" selected>Last 1 Day</option>
+        <option value="2d">Last 2 Days</option>
+        <option value="7d">Last 7 Days</option>
+        <option value="14d">Last 14 Days</option>
+        <option value="custom">Custom Date Range</option>
+      </select>
+    </div>
+  </div>
+  <div id="custom-date-range-wrap" class="custom-date-grid" style="margin-top:10px; display:none;">
+    <div class="filter-field">
+      <div class="muted">Start Date & Time (UTC)</div>
+      <input id="custom-start-dt" type="datetime-local">
+    </div>
+    <div class="filter-field">
+      <div class="muted">End Date & Time (UTC)</div>
+      <input id="custom-end-dt" type="datetime-local">
+    </div>
+  </div>
+</div>
+
+<div class="card mb16">
+  <h3>PE Partition Usage Trend</h3>
+  <div class="muted" style="margin-bottom:8px">X-axis: UTC Time from DB, Y-axis: Use% (0-100), hover graph to view mounted partitions with Use% (scroll horizontally for dense ranges)</div>
+  <div class="pe-partition-trend-wrap" id="pe-partition-trend-wrap">
+    <svg id="pe-partition-trend-chart" viewBox="0 0 900 280" preserveAspectRatio="none"></svg>
+    <div id="pe-partition-trend-empty" class="muted">No partition series data in selected time range.</div>
+    <div id="pe-partition-hover" class="pe-partition-hover"></div>
+  </div>
+</div>
+
+{% endblock %}

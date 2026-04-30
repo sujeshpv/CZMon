@@ -92,8 +92,11 @@ class Runner:
       Configuration containing PC and PE IP details.
     """
     try:
-      self.pc_ips.extend(v["ip"] for v in testbed_config.get("pcs", []))
-      self.pe_ips.extend(v["ip"] for v in testbed_config.get("pes", []))
+      pcs = testbed_config.get("pcs", []) or []
+      top_level_pes = testbed_config.get("pes", []) or []
+      self.pc_ips = [node.get("ip") for zone in testbed_config for node in testbed_config[zone] if node.get("type") == "PC"]
+      self.pe_ips = [node.get("ip") for zone in testbed_config for node in testbed_config[zone] if node.get("type") == "PE"]
+
       if self.pc_ips:
         os.environ["PC_IPS"] = ",".join(self.pc_ips)
       if self.pe_ips:
