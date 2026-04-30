@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -22,9 +23,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = "django-insecure-9rrv6vcv@@)!btu*0z9gq!q^d-$z1cat2d@22ws(d#sc!fxub7"
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
-STATIC_ROOT="/home/nutanix/czmonrunning/"
+# With DEBUG=False, runserver does not serve /static/ files; the UI looks blank without CSS/JS.
+# Default True for local `runserver`. For production: set DJANGO_DEBUG=false (or 0).
+DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() in ("1", "true", "yes")
+STATIC_ROOT = os.environ.get("DJANGO_STATIC_ROOT", "/home/nutanix/czmonrunning/")
 
 ALLOWED_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", "10.20.161.103"]
 
@@ -38,7 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # removed `coreapp` (app deleted)
+    "coreapp",
 ]
 
 MIDDLEWARE = [

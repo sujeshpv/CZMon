@@ -1,0 +1,2 @@
+# Local UI / dev (Python 3.8+). Django 5.x requires Python 3.10+.
+Django>=4.2,<5
