@@ -7,6 +7,7 @@ import sqlite3
 import threading
 import time
 import uuid
+import os
 
 try:
   import queue as Queue
@@ -457,7 +458,9 @@ class Sqlite3Worker(threading.Thread):
     exports a schema.sql
     """
     try:
-      with open("library/schema.sql", "w") as f:
+      base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+      schema_path = os.path.join(base_dir, "library", "schema.sql")
+      with open(schema_path, "w") as f:
         for line in self.sqlite3_conn.iterdump():
           if line.startswith("CREATE"):
             f.write(f"{line}\n")

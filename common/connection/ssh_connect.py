@@ -8,6 +8,10 @@ import os
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+DEFAULT_SSH_KEY_PATH = os.path.join(_PROJECT_ROOT, SSH, KEYS, NUTANIX)
 
 
 class Ssh:
@@ -27,7 +31,7 @@ class Ssh:
       remote_ip,
       username,
       password=None,
-      key_path=os.path.join(SSH, KEYS, NUTANIX)
+      key_path=DEFAULT_SSH_KEY_PATH
   ):
     """
     Initialize SSH connection handler.

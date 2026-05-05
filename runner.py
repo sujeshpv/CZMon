@@ -30,14 +30,15 @@ class Runner:
       self.config = None
       self.pc_ips = []
       self.pe_ips = []
+      BASE_DIR = os.path.dirname(os.path.abspath(__file__))
       self.endpoint_config = os.path.join(
-          STATIC, CONFIGURATIONS, ENDPOINTS_JSON
+          BASE_DIR, STATIC, CONFIGURATIONS, ENDPOINTS_JSON
       )
       self.api_config = os.path.join(
-          STATIC, CONFIGURE, API_METRICS_CATALOG_JSON
+          BASE_DIR, STATIC, CONFIGURE, API_METRICS_CATALOG_JSON
       )
       self.cli_config = os.path.join(
-          STATIC, CONFIGURE, CLI_METRICS_CATALOG_JSON
+          BASE_DIR, STATIC, CONFIGURE, CLI_METRICS_CATALOG_JSON
       )
       self.api_processor = ApiProcessor()
       self.cli_processor = CliProcessor()
