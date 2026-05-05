@@ -1,0 +1,8 @@
+{
+  "cluster_version": {
+    "description": "List of commands to be executed on the cluster",
+    "command": ["df -h"],
+    "endpoint_type": "PC"
+  }
+
+}
