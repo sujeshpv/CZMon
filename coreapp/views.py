@@ -13,6 +13,25 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 # Create your views here.
+_IPV4_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+
+
+def _extract_ipv4(value):
+    """Extract the first IPv4 found in *value*.
+
+    The entity dropdown's underlying option value can be either a bare IP
+    (e.g. ``"10.23.69.9"``) or a labelled string
+    (e.g. ``"CZ_RENO_AZ01_APPS01 (10.23.69.9) (PE)"``). The DB stores the
+    bare PE IP in ``cluster_version.ip``, so we always strip the IP out
+    before using it as a SQL filter. Returns an empty string when no IP
+    is found.
+    """
+    if not value:
+        return ""
+    match = _IPV4_RE.search(str(value))
+    return match.group(0) if match else ""
+
+
 def home(request):
     return render(request, "home1.html")
 
@@ -473,6 +492,12 @@ def pe_partition_series_api(request):
             if cluster:
                 where.append("cluster_name = ?")
                 params.append(cluster)
+            entity_ip = _extract_ipv4(entity)
+            if entity_ip:
+                # Restrict to rows collected from this PE so we don't pull
+                # 2000 rows from unrelated clusters and then post-filter.
+                where.append("ip = ?")
+                params.append(entity_ip)
             if start:
                 where.append("created_at >= ?")
                 params.append(start)
@@ -565,8 +590,17 @@ def pe_partition_series_api(request):
 def partition_nodes_api(request):
     """
     Return distinct node IPs seen in df -h blocks for selected time range.
+
+    Filters
+    -------
+    - cluster : optional cluster_name (legacy)
+    - entity  : PE external IP (matches the value emitted by the entity
+                dropdown). When provided, restricts the SQL to rows that
+                were collected from this PE only - otherwise we'd return
+                SVMs from every cluster in the DB.
     """
     cluster = (request.GET.get("cluster") or "").strip()
+    entity = (request.GET.get("entity") or "").strip()
     start = (request.GET.get("start") or "").strip()
     end = (request.GET.get("end") or "").strip()
     range_key = (request.GET.get("range") or "").strip()
@@ -598,6 +632,10 @@ def partition_nodes_api(request):
                 if cluster:
                     where.append("cluster_name = ?")
                     params.append(cluster)
+                entity_ip = _extract_ipv4(entity)
+                if entity_ip:
+                    where.append("ip = ?")
+                    params.append(entity_ip)
                 if window_start:
                     where.append("created_at >= ?")
                     params.append(window_start)
@@ -636,7 +674,7 @@ def partition_nodes_api(request):
                         parsed_rows = _parse_df_rows_from_blocks(_split_host_blocks(raw_output))
 
                     for row in parsed_rows:
-                        host = str(row.get("host") or row_ip or "").strip()
+                        host = str(row.get("host") or "").strip()
                         if host:
                             local_hosts.add(host)
                 return local_hosts

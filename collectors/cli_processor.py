@@ -275,10 +275,13 @@ class CliProcessor:
       for table_name, entity_data in config.items():
         endpoint_type = entity_data.get("endpoint_type")
         commands = entity_data.get("command", [])
-        system_config = {
-          "ips": os.environ.get(f"{endpoint_type}_IPS", "").split(",")
-        }
-        for ip in system_config.get("ips"):
+        ip_endpoints = [
+          (ip, et)
+          for et in endpoint_type
+          for ip in os.environ.get(f"{et}_IPS", "").split(",")
+          if ip
+        ]
+        for ip, current_endpoint_type in ip_endpoints:
           try:
             ssh_obj = Ssh(ip, NUTANIX)
             for command in commands:
