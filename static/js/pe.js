@@ -209,6 +209,16 @@
     trendChartEl.innerHTML = '';
     trendEmptyEl.style.display = 'block';
     trendHoverEl.style.display = 'none';
+    const badgeEl = document.getElementById('pe-partition-trend-badge');
+    if (badgeEl) {
+      badgeEl.textContent = '';
+      badgeEl.style.display = 'none';
+    }
+    const hintEl = document.getElementById('pe-partition-trend-hint');
+    if (hintEl) {
+      hintEl.textContent = '';
+      hintEl.style.display = 'none';
+    }
   }
 
   function formatUtc(tsMs){
@@ -226,6 +236,18 @@
   }
 
   function renderTrend(series, unit, selectedPe){
+    // Always reset the floating hover panel so a stale partition list from
+    // the previous selection (e.g. all SVMs in the entity) is never shown
+    // when the new render scopes the data to a single SVM.
+    trendHoverEl.style.display = 'none';
+    trendHoverEl.innerHTML = '';
+    hoverPinned = false;
+    hoverPanelActive = false;
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+
     const allPoints = [];
     series.forEach(s => (s.points || []).forEach(p => allPoints.push(p)));
     if(!allPoints.length){
@@ -298,11 +320,15 @@
       const pe = selectedPe || rows[0]?.pe || '';
       return { ts, value: useValue, pe, partitions: rows.length };
     });
-    const containerWidth = Math.max(780, (trendWrapEl.clientWidth || 900) - 16);
-    const pointGap = 34;
-    const minPlotWidth = Math.max(1, containerWidth - pad.left - pad.right);
-    const densePlotWidth = Math.max(1, Math.max(summaryPoints.length - 1, 1) * pointGap);
-    plotW = Math.max(minPlotWidth, densePlotWidth);
+    // Smart sizing: chart fits the visible container when data is sparse,
+    // and only grows wider (triggering horizontal scroll) when there are
+    // enough points to actually need more room. pointGap is the minimum
+    // horizontal room each point gets when dense.
+    const containerWidth = Math.max(640, (trendWrapEl.clientWidth || 900) - 16);
+    const pointGap = 60;
+    const innerWidth = Math.max(1, containerWidth - pad.left - pad.right);
+    const densePlotWidth = Math.max(summaryPoints.length - 1, 1) * pointGap;
+    plotW = Math.max(innerWidth, densePlotWidth);
     width = pad.left + pad.right + plotW;
     const pointXByTs = {};
     if (summaryPoints.length <= 5) {
@@ -321,7 +347,10 @@
     };
 
     if(summaryPoints.length){
-      const shouldDrawLine = summaryPoints.length > 2;
+      // Draw the connecting line as soon as we have 2 or more points so the
+      // user immediately sees the trend direction; with a single point we
+      // intentionally skip the line because there's nothing to connect.
+      const shouldDrawLine = summaryPoints.length >= 2;
       if (shouldDrawLine) {
         const d = summaryPoints.map((p, i) => `${i===0 ? 'M' : 'L'} ${pointXForTs(p.ts)} ${yFor(p.value)}`).join(' ');
         lines.push(`<path d="${d}" fill="none" stroke="${seriesColor}" stroke-width="2.2" opacity="0.95"/>`);
@@ -368,43 +397,103 @@
       <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${pad.top+plotH}" stroke="#9ca3af" stroke-width="1"/>
       ${grid.join('')}
       ${lines.join('')}
-      <text x="${pad.left + 4}" y="${pad.top + 14}" text-anchor="start" font-size="11" fill="#334155">SVM IP: ${escapeXml(selectedPe || '-')}</text>
       ${xTickLabels.join('')}
     `;
+
+    // Surface the selected SVM in a header badge instead of crowding the chart.
+    const badgeEl = document.getElementById('pe-partition-trend-badge');
+    if (badgeEl) {
+      const svmText = (selectedPe || '').trim();
+      badgeEl.textContent = svmText ? `SVM: ${svmText}` : '';
+      badgeEl.style.display = svmText ? 'inline-flex' : 'none';
+    }
+
+    // Friendly hint when only a single sample is available in the selected range.
+    const hintEl = document.getElementById('pe-partition-trend-hint');
+    if (hintEl) {
+      if (summaryPoints.length === 1) {
+        const onlyPoint = summaryPoints[0];
+        hintEl.innerHTML = `Only <strong>1 sample</strong> in the selected range &mdash; <strong>${onlyPoint.value.toFixed(1)}${escapeXml(unit || '%')}</strong> at <strong>${escapeXml(formatUtc(onlyPoint.ts))}</strong>. Pick a longer time range to see a trend.`;
+        hintEl.style.display = 'block';
+      } else {
+        hintEl.style.display = 'none';
+      }
+    }
     const showHover = (nearestTs, clientX, clientY) => {
-      const rows = (byTs[nearestTs] || []).slice().sort((a, b) => b.value - a.value || a.partition.localeCompare(b.partition));
-      const nodeText = escapeXml(selectedPe || rows[0]?.pe || '-');
+      const allRows = (byTs[nearestTs] || []).slice();
+      const uniqueHosts = Array.from(new Set(allRows.map(r => String(r.pe || '').trim()).filter(Boolean))).sort();
+      const isMultiHost = uniqueHosts.length > 1;
+      const isIp = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(selectedPe || '').trim());
+
+      // Header: SVM IP when scoped to one node, otherwise show the cluster
+      // label so it's obvious the rows below come from every SVM in the PE.
+      let headerHtml;
+      if (isIp) {
+        headerHtml = `SVM: ${escapeXml(selectedPe)}`;
+      } else if (isMultiHost) {
+        headerHtml = `Cluster: ${escapeXml(selectedPe || '-')} <span class="hover-subtle">(All SVMs)</span>`;
+      } else {
+        headerHtml = `SVM: ${escapeXml(selectedPe || allRows[0]?.pe || '-')}`;
+      }
+
+      const sortRows = (rows) => rows.slice().sort((a, b) => (b.value - a.value) || a.partition.localeCompare(b.partition));
+      const renderTable = (rows) => {
+        const body = rows.map(r => `
+          <tr>
+            <td>${escapeXml(r.partition)}</td>
+            <td>${Number(r.value).toFixed(1)}${escapeXml(unit || '%')}</td>
+          </tr>
+        `).join('');
+        return `
+          <table>
+            <colgroup><col style="width:auto"><col style="width:96px"></colgroup>
+            <thead><tr><th>Mounted on</th><th>Use %</th></tr></thead>
+            <tbody>${body}</tbody>
+          </table>
+        `;
+      };
+
+      let bodyHtml;
+      if (isMultiHost) {
+        // Group rows by SVM so the same mount appearing on multiple SVMs
+        // no longer reads as a duplicate; each block is a single SVM.
+        const grouped = {};
+        allRows.forEach(r => {
+          const host = String(r.pe || '-').trim() || '-';
+          (grouped[host] = grouped[host] || []).push(r);
+        });
+        bodyHtml = uniqueHosts.map(host => {
+          const rows = sortRows(grouped[host] || []);
+          return `
+            <div class="host-section">
+              <div class="host-header">${escapeXml(host)} <span class="hover-subtle">(${rows.length})</span></div>
+              ${renderTable(rows)}
+            </div>
+          `;
+        }).join('');
+      } else {
+        bodyHtml = renderTable(sortRows(allRows));
+      }
+
+      const countLabel = isMultiHost
+        ? `${allRows.length} mounts across ${uniqueHosts.length} SVMs`
+        : `${allRows.length}`;
       const timeText = escapeXml(formatUtc(nearestTs));
-      const bodyRows = rows.map(r => `
-        <tr>
-          <td>${escapeXml(r.partition)}</td>
-          <td>${Number(r.value).toFixed(1)}${escapeXml(unit || '%')}</td>
-        </tr>
-      `).join('');
+
       trendHoverEl.innerHTML = `
-        <h4>SVM: ${nodeText}</h4>
+        <h4>${headerHtml}</h4>
         <div style="margin-bottom:6px;color:#cbd5e1;">UTC: ${timeText}</div>
-        <div style="margin-bottom:6px;color:#cbd5e1;">Partitions: ${rows.length}</div>
-        <table>
-          <colgroup>
-            <col style="width:auto">
-            <col style="width:96px">
-          </colgroup>
-          <thead><tr><th>Mounted on</th><th>Use %</th></tr></thead>
-          <tbody>${bodyRows}</tbody>
-        </table>
+        <div style="margin-bottom:6px;color:#cbd5e1;">Partitions: ${countLabel}</div>
+        ${bodyHtml}
       `;
+      const hostEl = trendHoverEl.offsetParent || trendWrapEl.parentElement;
+      const hostRect = hostEl.getBoundingClientRect();
       const wrapRect = trendWrapEl.getBoundingClientRect();
-      const panelWidth = trendHoverEl.offsetWidth || 420;
-      const panelHeight = trendHoverEl.offsetHeight || 300;
-      const contentX = trendWrapEl.scrollLeft + (clientX - wrapRect.left);
-      const contentY = trendWrapEl.scrollTop + (clientY - wrapRect.top);
-      const minLeft = trendWrapEl.scrollLeft + 8;
-      const maxLeft = trendWrapEl.scrollLeft + Math.max(8, wrapRect.width - panelWidth - 8);
-      const minTop = trendWrapEl.scrollTop + 8;
-      const maxTop = trendWrapEl.scrollTop + Math.max(8, wrapRect.height - panelHeight - 8);
-      const left = Math.min(Math.max(minLeft, contentX + 14), maxLeft);
-      const top = Math.min(Math.max(minTop, contentY + 14), maxTop);
+      const panelWidth = trendHoverEl.offsetWidth || 360;
+      const wrapLeftInHost = wrapRect.left - hostRect.left;
+      const wrapTopInHost = wrapRect.top - hostRect.top;
+      const left = wrapLeftInHost + Math.max(0, wrapRect.width - panelWidth - 8);
+      const top = wrapTopInHost + 8;
       trendHoverEl.style.left = `${left}px`;
       trendHoverEl.style.top = `${top}px`;
       trendHoverEl.style.display = 'block';
@@ -496,7 +585,9 @@
       return;
     }
     const { isReady: _ignoreReadyNodes, ...queryTime } = timeParams;
-    const query = new URLSearchParams(queryTime).toString();
+    const nodeParams = { ...queryTime };
+    if (entity) nodeParams.entity = entity;
+    const query = new URLSearchParams(nodeParams).toString();
     const res = await fetch(`/api/cluster-metrics/partition-nodes/?${query}`);
     if(!res.ok){
       fillSelect(nodeSel, [], 'All SVMIPs');

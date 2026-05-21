@@ -121,6 +121,28 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid #e6e9ee}
 }
 
 /* PE partition time-series chart */
+.trend-header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 4px 0}
+.trend-header h3{margin:0}
+.trend-badge{
+  display:inline-flex;
+  align-items:center;
+  padding:3px 10px;
+  border-radius:999px;
+  background:#eef2ff;
+  color:#1e3a8a;
+  border:1px solid #c7d2fe;
+  font-size:0.82rem;
+  font-weight:600;
+}
+.trend-hint{
+  margin-top:8px;
+  padding:8px 10px;
+  background:#fffbeb;
+  border:1px solid #fde68a;
+  color:#92400e;
+  border-radius:6px;
+  font-size:0.88rem;
+}
 .pe-partition-trend-wrap{
   border:1px solid #e5e7eb;
   border-radius:8px;
@@ -129,7 +151,13 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid #e6e9ee}
   position:relative;
   overflow-x:auto;
   overflow-y:hidden;
+  scrollbar-width:thin;
+  scrollbar-color:#cbd5e1 transparent;
 }
+.pe-partition-trend-wrap::-webkit-scrollbar{height:10px}
+.pe-partition-trend-wrap::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
+.pe-partition-trend-wrap::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+.pe-partition-trend-wrap::-webkit-scrollbar-track{background:transparent}
 #pe-partition-trend-chart{
   width:100%;
   height:280px;
@@ -156,13 +184,18 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid #e6e9ee}
   height:10px;
   border-radius:50%;
 }
+/* The trend card is the positioning context for the hover panel so the
+   panel can extend below the chart wrapper without being clipped by the
+   wrapper's overflow:hidden (which is required for horizontal scrolling). */
+.trend-card{position:relative}
 .pe-partition-hover{
   position:absolute;
   display:none;
   z-index:5;
-  min-width:420px;
-  max-width:min(900px, 92vw);
-  max-height:min(680px, 88vh);
+  width:360px;
+  min-width:300px;
+  max-width:min(440px, 92vw);
+  max-height:min(380px, 70vh);
   overflow:auto;
   background:#0f172a;
   color:#e2e8f0;
@@ -171,7 +204,13 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid #e6e9ee}
   padding:10px;
   box-shadow:0 10px 24px rgba(2,6,23,0.35);
   font-size:12px;
+  scrollbar-width:thin;
+  scrollbar-color:#475569 transparent;
 }
+.pe-partition-hover::-webkit-scrollbar{width:10px}
+.pe-partition-hover::-webkit-scrollbar-thumb{background:#475569;border-radius:6px}
+.pe-partition-hover::-webkit-scrollbar-thumb:hover{background:#64748b}
+.pe-partition-hover::-webkit-scrollbar-track{background:transparent}
 .pe-partition-hover h4{
   margin:0 0 6px 0;
   font-size:12px;
@@ -195,6 +234,18 @@ th,td{padding:10px;text-align:left;border-bottom:1px solid #e6e9ee}
   background:#0f172a;
   z-index:1;
 }
+.pe-partition-hover .host-section{margin-bottom:10px}
+.pe-partition-hover .host-section:last-child{margin-bottom:0}
+.pe-partition-hover .host-header{
+  font-weight:600;
+  color:#f8fafc;
+  padding:4px 6px;
+  border-bottom:1px solid #334155;
+  margin-bottom:4px;
+  background:#0f172a;
+  border-radius:4px;
+}
+.pe-partition-hover .hover-subtle{color:#94a3b8;font-weight:normal;font-size:11px;margin-left:6px}
 .pe-partition-hover th:last-child,
 .pe-partition-hover td:last-child{
   text-align:right;
