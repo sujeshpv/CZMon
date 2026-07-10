@@ -140,16 +140,49 @@ def get_vm_count_per_host(
         return json.dumps({"error": str(e)}, indent=4)
 
 if __name__ == "__main__":
+    # Change the argument parser to accept a config file instead of individual IPs
     parser = argparse.ArgumentParser(
         description="Get powered on/off VM counts and affinity status per host/SVM."
     )
-    parser.add_argument("-i", "--ip", required=True, help="Prism Element Cluster IP or FQDN")
-    parser.add_argument("-u", "--username", required=True, help="Prism Element Username")
-    parser.add_argument("-p", "--password", help="Prism Element Password (will prompt if not provided)")
-
+    # Default to the endpoints config if not provided
+    parser.add_argument(
+        "-c", "--config", 
+        default="static/configurations/endpoints.json", 
+        help="Path to the setup config JSON file"
+    )
     args = parser.parse_args()
 
-    cli_password = args.password if args.password else getpass.getpass(prompt="Password: ")
+    # Load the configuration file
+    try:
+        with open(args.config, 'r') as f:
+            config_data = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: Config file not found at {args.config}")
+        exit(1)
 
-    print(get_vm_count_per_host(args.ip, args.username, cli_password))
+    final_results = {}
+
+    # Traverse through each cluster in the config
+    # Adjust the keys ('pe_ips', 'clusters', etc.) based on your actual config.json structure
+    for cluster in config_data.get('clusters', []):
+        ip = cluster.get('ip')
+        username = cluster.get('username', 'admin')  # Or read from a global config
+        password = cluster.get('password', 'Nutanix.123') 
+
+        if not ip:
+            continue
+
+        print(f"Processing cluster: {ip}...")
+
+        # Call your existing logic for each IP
+        try:
+            # Assuming your main logic is wrapped in a function called 'process_cluster'
+            # If you don't have a wrapper function, you can indent your existing logic here
+            cluster_result = process_cluster(ip, username, password)
+            final_results[ip] = cluster_result
+        except Exception as e:
+            print(f"Failed to process {ip}: {e}")
+
+    # Output the final aggregated JSON
+    print(json.dumps(final_results, indent=2))
     
