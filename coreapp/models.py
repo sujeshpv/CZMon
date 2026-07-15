@@ -61,5 +61,15 @@ class CZAlert(models.Model):
     def __str__(self):
         return f"{self.pc_name_or_ip} - {self.source_cluster} ({self.alert_policy_id})"
 
+class AhvHomeUsage(models.Model):
+    """Database model to store AHV /home partition usage per cluster."""
+    cluster_name = models.CharField(max_length=255, unique=True)
+    status_data = models.JSONField(null=True, blank=True)
+    last_checked = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.cluster_name} - Checked: {self.last_checked}"
+
+
 
 
