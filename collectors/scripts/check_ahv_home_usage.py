@@ -1,4 +1,4 @@
-"""Checks the /home partition usage on all AHV hosts in a Nutanix cluster.
+"""Checks /home partition usage on AHV hosts.
 
 This script utilizes a two-tier connection strategy. It first attempts to 
 retrieve the data via the CVM to handle large clusters efficiently. If the CVM 
@@ -6,7 +6,6 @@ is unresponsive or restricted by AOS bugs, it falls back to querying the
 hypervisors directly.
 """
 
-import argparse
 import json
 import re
 import sys
@@ -171,40 +170,60 @@ def process_cluster(vip: str, pe_user: str, pe_pass: str) -> dict:
 
     return {cluster_name: host_results}
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Check /home usage on AHV hosts.")
-    parser.add_argument(
-        "-c", "--config",
-        default="static/configurations/endpoints.json",
-        help="Path to the endpoints JSON configuration file"
-    )
-    args = parser.parse_args()
+def run_ahv_home_usage(config_path=None):
+    """Reads endpoints from config and persists AHV usage to DB."""
+    import os
+    from django.conf import settings
+    from coreapp.models import AhvHomeUsage
+
+    if not config_path:
+        config_path = os.path.join(settings.BASE_DIR, "static", "configurations", "endpoints.json")
 
     try:
-        with open(args.config, 'r') as f:
+        with open(config_path, 'r') as f:
             config_data = json.load(f)
-    except FileNotFoundError:
-        print(json.dumps({"error": f"Configuration file not found: {args.config}"}, indent=4))
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print(json.dumps({"error": f"Invalid JSON format in file: {args.config}"}, indent=4))
-        sys.exit(1)
+    except Exception as e:
+        print(f"Failed to load config: {str(e)}")
+        return
 
-    final_results = {}
-    pe_endpoints = config_data.get("pe", []) if isinstance(config_data, dict) else config_data
+    # Extract all endpoints from the zones
+    all_endpoints = [entry for zone in config_data.values() for entry in zone]
 
-    for endpoint in pe_endpoints:
+    for endpoint in all_endpoints:
+        # Skip Prism Central, this is a PE only script
+        if endpoint.get("type", "").upper() != "PE":
+            continue
+
         ip = endpoint.get("ip") or endpoint.get("virtual_ip")
-        username = endpoint.get("username", "admin")
-        password = endpoint.get("password", "Nutanix.123")
+        creds = endpoint.get("credentials", {})
+        user = creds.get("user", "admin")
+        pwd = creds.get("password", "Nutanix.123")
 
         if not ip:
             continue
 
-        cluster_result = process_cluster(ip, username, password)
-        final_results.update(cluster_result)
+        print(f"Checking AHV /home usage for cluster: {ip}...")
 
-    print(json.dumps(final_results, indent=2))
+        result = process_cluster(ip, user, pwd)
+
+        # Save JSON to database
+        for cluster_name, hosts_data in result.items():
+            obj, created = AhvHomeUsage.objects.update_or_create(
+                cluster_name=cluster_name,
+                defaults={
+                    "status_data": hosts_data,
+                }
+            )
+
+            action = "Created" if created else "Updated"
+            print(f"{action} DB record for AHV usage on {cluster_name}")
 
 if __name__ == "__main__":
-    main()
+    # Setup Django environment so it can run standalone
+    import os
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "czmon.settings")
+    django.setup()
+
+    run_ahv_home_usage()
+
