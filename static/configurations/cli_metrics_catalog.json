@@ -4,5 +4,4 @@
     "command": ["df -h"],
     "endpoint_type": "PC"
   }
-
 }
