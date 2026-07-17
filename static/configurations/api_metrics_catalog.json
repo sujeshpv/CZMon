@@ -5,43 +5,12 @@
     "endpoint_type": "PE",
     "api_endpoint": "/PrismGateway/services/rest/v2.0/cluster/",
     "http_method": "GET",
-    "params": {},
+    "params": {
+    },
     "value_paths": [
       {
         "alias": "snapshot_reclaimable_bytes",
         "path": "usage_stats.\"storage.snapshot_reclaimable_bytes\""
-      }
-    ]
-  },
-  "vm_count": {
-    "description": "Total VM count in the cluster",
-    "entity_type": "cluster",
-    "endpoint_type": "PE",
-    "api_endpoint": "/PrismGateway/services/rest/v2.0/vms/",
-    "http_method": "GET",
-    "params": {},
-    "value_paths": [
-      {
-        "alias": "total_vms",
-        "path": "metadata.total_entities"
-      }
-    ]
-  },
-  "pgw_status": {
-    "description": "Check Prism Gateway status",
-    "entity_type": "cluster",
-    "endpoint_type": "PE",
-    "api_endpoint": "/PrismGateway/services/rest/v1/heartbeat",
-    "http_method": "GET",
-    "params": {},
-    "value_paths": [
-      {
-        "alias": "nos_version",
-        "path": "nosVersion"
-      },
-      {
-        "alias": "site_type",
-        "path": "siteType"
       }
     ]
   }
