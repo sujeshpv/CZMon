@@ -5,18 +5,18 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
 
-    dependencies = [
-        ('coreapp', '0003_clusterutilization_status_data'),
-    ]
+  dependencies = [
+    ('coreapp', '0003_clusterutilization_status_data'),
+  ]
 
-    operations = [
-        migrations.CreateModel(
-            name='AhvHomeUsage',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('cluster_name', models.CharField(max_length=255, unique=True)),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('last_checked', models.DateTimeField(auto_now=True)),
-            ],
-        ),
-    ]
+  operations = [
+    migrations.CreateModel(
+      name='AhvHomeUsage',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('cluster_name', models.CharField(max_length=255, unique=True)),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('last_checked', models.DateTimeField(auto_now=True)),
+      ],
+    ),
+  ]

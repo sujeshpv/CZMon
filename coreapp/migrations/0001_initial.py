@@ -5,20 +5,20 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
 
-    initial = True
+  initial = True
 
-    dependencies = [
-    ]
+  dependencies = [
+  ]
 
-    operations = [
-        migrations.CreateModel(
-            name='PrismGatewayStatus',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('ip_address', models.GenericIPAddressField(unique=True)),
-                ('is_online', models.BooleanField(default=False)),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('last_checked', models.DateTimeField(auto_now=True)),
-            ],
-        ),
-    ]
+  operations = [
+    migrations.CreateModel(
+      name='PrismGatewayStatus',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('ip_address', models.GenericIPAddressField(unique=True)),
+        ('is_online', models.BooleanField(default=False)),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('last_checked', models.DateTimeField(auto_now=True)),
+      ],
+    ),
+  ]
