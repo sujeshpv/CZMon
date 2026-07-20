@@ -69,7 +69,7 @@ class Runner:
       )
       parser.add_argument(
           "--run-type",
-          help=RUN_TYPE_HELP,
+          help=f"Run type must be one of: {', '.join(RUN_TYPE_CHOICES)}",
           required=True,
           choices=RUN_TYPE_CHOICES
       )
