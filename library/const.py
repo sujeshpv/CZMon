@@ -15,3 +15,4 @@ LOCAL_CLI = "local_cli"
 SSH = "ssh"
 KEYS = "keys"
 NUTANIX = "nutanix"
+RUN_TYPE_CHOICES = [API, CLI, LOCAL_CLI]

@@ -1,4 +1,4 @@
-i"""
+"""
 Executes local commands defined in the local CLI catalog configuration.
 
 This module reads a JSON configuration file containing a catalog of commands
