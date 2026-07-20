@@ -69,9 +69,9 @@ class Runner:
       )
       parser.add_argument(
           "--run-type",
-          help="Run type must be 'api', 'cli', or 'local_cli'",
+          help=RUN_TYPE_HELP,
           required=True,
-          choices=["api", "cli", "local_cli"]
+          choices=RUN_TYPE_CHOICES
       )
       self.args = parser.parse_args()
       return self.args
