@@ -1,0 +1,6 @@
+{
+  "check_pgw_status": {
+  "description": "Runs local python script for PGW Status (Demo)",
+  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
+  }
+}
