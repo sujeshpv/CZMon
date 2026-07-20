@@ -1,6 +1,16 @@
 {
   "check_pgw_status": {
-  "description": "Runs local python script for PGW Status (Demo)",
-  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
+    "description": "Runs local python script for PGW Status (Demo)",
+    "command": [
+      "/home/nutanix/CZMon/venv/bin/python3",
+      "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"
+    ]
+  },
+  "check_ahv_home_usage": {
+    "description": "Checks /home partition available, actual and usage percentage on all AHV hosts",
+    "command": [
+      "/home/nutanix/CZMon/venv/bin/python3",
+      "/home/nutanix/CZMon/collectors/scripts/check_ahv_home_usage.py"
+    ]
   }
 }
