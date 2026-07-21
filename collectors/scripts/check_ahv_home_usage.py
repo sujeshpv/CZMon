@@ -155,7 +155,7 @@ def run_cvm_ssh_strategy(
 def get_host_partition_info(
     ip: str, 
     passwords: List[str]
-) -> Optional[Dict[str, Dict[str, str]]]:
+) -> Dict[str, any]:
   """Tier 2: Fallback to direct AHV SSH if the CVM strategy fails.
 
   Args:
@@ -163,10 +163,13 @@ def get_host_partition_info(
     passwords: A list of possible passwords to attempt.
 
   Returns:
-    A dictionary of partition metrics, or None if connection fails.
+    A dictionary of partition metrics, or an explicit error dictionary capturing
+    the exception if the connection fails.
   """
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+  last_error = "Connection failed or timed out"
 
   for user, port in [("root", 22), ("nutant", 2223)]:
     for pwd in passwords:
@@ -198,8 +201,11 @@ def get_host_partition_info(
         if partitions:
           return partitions
       except Exception as e:
+        last_error = str(e)
         logger.error(f"Direct AHV SSH failed for {ip} with user {user}: {e}")
-  return None
+
+  # Return the specific exception instead of a generic string
+  return {"error": f"SSH Collection Failed: {last_error}"}
 
 def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
   """Parses raw terminal df output into a structured dictionary.
@@ -299,19 +305,19 @@ def collect_cluster_partition_usage(
     host_results = parse_cvm_output(cvm_output, hosts_map)
   else:
     for ip, name in hosts_map.items():
+      # usage will now be actual data OR an exact exception {"error": "..."}
       usage = get_host_partition_info(ip, passwords)
-      if usage:
-        host_results.append({name: usage})
+      host_results.append({name: usage})
 
   # Identify any hosts that failed to return valid data
   found_hostnames = {
       list(d.keys())[0] for d in host_results 
-      if d and isinstance(d, dict) and "error" not in list(d.values())[0]
+      if d and isinstance(d, dict)
   }
 
   for name in hosts_map.values():
     if name not in found_hostnames:
-      host_results.append({name: {"error": "Could not fetch usage data"}})
+      host_results.append({name: {"error": "Host missing from hostssh output"}})
 
   return {cluster_name: host_results}
 
