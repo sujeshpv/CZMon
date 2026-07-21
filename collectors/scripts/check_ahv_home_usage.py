@@ -1,31 +1,54 @@
+"""Checks partition usage on AHV hosts.
+
+This script utilizes a two-tier connection strategy to securely gather 
+partition metrics across AHV hosts and persists the data to SQLite.
+"""
+
 import json
+import logging
 import os
 import re
 import sys
 import time
-import logging
+from typing import Dict, List, Optional, Tuple
+
+import django
 import paramiko
 import requests
 import urllib3
-import django
-from typing import Tuple, Dict, List, Optional
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
-def get_cluster_info(cluster_ip: str, username: str, password: str) -> Tuple[str, Dict[str, str]]:
-  cluster_name = cluster_ip
-  hosts_map = {}
+# --- Global Configurations ---
+DEFAULT_CVM_USER = "nutanix"
+
+# The interactive shell needs time to render the prompt and menu over the network
+SHELL_PROMPT_DELAY = 2  
+# Running 'hostssh' triggers execution across every node in the cluster, which takes time
+HOSTSSH_EXECUTION_DELAY = 15  
+# Polling delay while waiting for the output buffer to fill
+BUFFER_POLL_DELAY = 1
+
+def get_cluster_info(cluster_ip: str, username: str, password: str) -> Tuple[Optional[str], Dict[str, str]]:
+  """Fetches the cluster name and host mapping from the Prism API."""
   auth_tuple = (username, password)
+  cluster_name = None
 
   try:
     url = f"https://{cluster_ip}:9440/PrismGateway/services/rest/v2.0/cluster"
     response = requests.get(url, auth=auth_tuple, verify=False, timeout=10)
     response.raise_for_status()
-    cluster_name = response.json().get("name", cluster_ip)
-  except requests.exceptions.RequestException:
-    pass
+    cluster_name = response.json().get("name")
 
+    if not cluster_name:
+      logger.error(f"Cluster name missing in API response for {cluster_ip}")
+      return None, {}
+  except requests.exceptions.RequestException as e:
+    logger.error(f"Failed to fetch cluster info for {cluster_ip}: {e}")
+    return None, {}
+
+  hosts_map = {}
   try:
     url = f"https://{cluster_ip}:9440/PrismGateway/services/rest/v2.0/hosts/"
     response = requests.get(url, auth=auth_tuple, verify=False, timeout=10)
@@ -42,33 +65,38 @@ def get_cluster_info(cluster_ip: str, username: str, password: str) -> Tuple[str
     return cluster_name, {}
 
 def run_cvm_ssh_strategy(cluster_ip: str, pe_user: str, passwords: List[str], hosts_map: Dict[str, str]) -> Optional[str]:
+  """Tier 1: Gathers partition data by invoking an interactive shell on the CVM."""
   if not hosts_map:
     return None
 
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-  for user in ["nutanix", pe_user]:
+  for user in [DEFAULT_CVM_USER, pe_user]:
     for pwd in passwords:
       try:
         client.connect(cluster_ip, username=user, password=pwd, timeout=15, auth_timeout=15)
 
         shell = client.invoke_shell()
-        time.sleep(2)
+        # Wait for the initial shell prompt or NuService Menu to render
+        time.sleep(SHELL_PROMPT_DELAY)
 
         out = ""
         if shell.recv_ready():
           out = shell.recv(8192).decode('utf-8')
 
+        # Bypass the restricted NuService Menu if present
         if "Choice:" in out:
           shell.send("3\n")
-          time.sleep(2)
+          # Wait for the restricted menu to transition to the Admin Shell
+          time.sleep(SHELL_PROMPT_DELAY)
           if shell.recv_ready():
             shell.recv(8192)
 
-        # Send hostssh to check ALL partitions instead of just /home
+        # Execute hostssh to check ALL partitions
         shell.send("hostssh 'df -P -h'\n")
-        time.sleep(3)
+        # Wait briefly to see if the CVM prompts for a sudo password
+        time.sleep(SHELL_PROMPT_DELAY)
 
         out = ""
         if shell.recv_ready():
@@ -77,23 +105,27 @@ def run_cvm_ssh_strategy(cluster_ip: str, pe_user: str, passwords: List[str], ho
         if "password" in out.lower():
           shell.send(pwd + "\n")
 
-        time.sleep(15)
+        # Wait for the hostssh command to execute across all hypervisors
+        time.sleep(HOSTSSH_EXECUTION_DELAY)
 
         output = ""
         while shell.recv_ready():
           output += shell.recv(8192).decode("utf-8")
-          time.sleep(1)
+          # Poll briefly to ensure the buffer is fully drained
+          time.sleep(BUFFER_POLL_DELAY)
 
         client.close()
 
         if "%" in output and "not allowed" not in output:
           return output
-      except Exception:
+      except Exception as e:
+        logger.error(f"CVM SSH strategy failed for user {user} on {cluster_ip}: {e}")
         continue
 
   return None
 
 def get_direct_ahv_usage(ip: str, passwords: List[str]) -> Optional[Dict[str, Dict[str, str]]]:
+  """Tier 2: Fallback to direct AHV SSH if the CVM strategy fails."""
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -118,11 +150,12 @@ def get_direct_ahv_usage(ip: str, passwords: List[str]) -> Optional[Dict[str, Di
 
         if partitions:
           return partitions
-      except Exception:
-        pass
+      except Exception as e:
+        logger.error(f"Direct AHV SSH failed for {ip} with user {user}: {e}")
   return None
 
 def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
+  """Parses raw terminal df output into a structured dictionary."""
   results = []
   current_host = None
   single_node_host = list(hosts_map.values())[0] if len(hosts_map) == 1 else None
@@ -174,11 +207,15 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
   return results
 
 def process_cluster(cluster_ip: str, pe_user: str, pe_pass: str) -> Dict:
+  """Orchestrates data collection for a single cluster."""
   passwords = list(dict.fromkeys([pe_pass, "nutanix/4u", "Nutanix.123", "RDMCluster.123"]))
   cluster_name, hosts_map = get_cluster_info(cluster_ip, pe_user, pe_pass)
 
-  if not hosts_map:
-    return {cluster_name: [{"error": "Could not fetch hosts map from API"}]}
+  if not cluster_name or not hosts_map:
+    # Fallback to IP if name resolution entirely failed
+    fallback_name = cluster_name if cluster_name else cluster_ip
+    logger.error(f"Halting processing for {fallback_name} due to missing cluster metadata.")
+    return {fallback_name: [{"error": "Could not fetch cluster info or hosts map from API"}]}
 
   host_results = []
   cvm_output = run_cvm_ssh_strategy(cluster_ip, pe_user, passwords, hosts_map)
@@ -199,8 +236,9 @@ def process_cluster(cluster_ip: str, pe_user: str, pe_pass: str) -> Dict:
   return {cluster_name: host_results}
 
 def run_ahv_home_usage(config_path: Optional[str] = None) -> None:
-  from django.conf import settings
+  """Reads endpoints from config and persists usage data to DB."""
   from coreapp.models import AhvHomeUsage
+  from django.conf import settings
 
   if not config_path:
     config_path = os.path.join(settings.BASE_DIR, "static", "configurations", "endpoints.json")
