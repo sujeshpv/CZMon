@@ -1,8 +1,9 @@
-"""Checks the powered on/off VM counts and affinity status per node in a Nutanix cluster.
+"""
+Checks the powered on/off VM counts and affinity status per node.
 
 This script connects to the Nutanix Prism API to map each VM to its
 corresponding host and tally the power states and affinity settings.
-It is designed to run independently and log JSON for the framework to ingest.
+It is designed to run independently and print JSON for the framework.
 """
 
 import json
@@ -23,7 +24,7 @@ def fetch_vm_count_per_node(
   username: str,
   password: str,
 ) -> dict:
-  """Connects to Nutanix Prism API to get VM counts and affinity status per node.
+  """Connects to Nutanix Prism API to get VM counts and affinity status.
 
   Args:
     cluster_ip (str): The Prism Element Cluster IP or FQDN.
@@ -31,9 +32,7 @@ def fetch_vm_count_per_node(
     password (str): The Prism Element Password for authentication.
 
   Returns:
-    dict: A dictionary containing the cluster name and a count
-          of powered_on, powered_off, and affinity_enabled VMs per node.
-          Returns an error dictionary if the request fails.
+    dict: A dictionary containing the cluster name and counts per node.
   """
   base_url = f"https://{cluster_ip}:9440/api/nutanix/v2.0"
   auth = (username, password)
@@ -69,7 +68,9 @@ def fetch_vm_count_per_node(
 
       if host_uuid and svm_ip:
         host_map[host_uuid] = svm_ip
-        counts[svm_ip] = {"powered_on": 0, "powered_off": 0, "affinity_enabled_count": 0}
+        counts[svm_ip] = {
+          "powered_on": 0, "powered_off": 0, "affinity_enabled_count": 0
+        }
 
     vms_resp = requests.get(
       f"{base_url}/vms", auth=auth, headers=headers, verify=False, timeout=15
@@ -78,7 +79,9 @@ def fetch_vm_count_per_node(
     vms_data = vms_resp.json().get("entities", [])
 
     if "Unassigned_Host" not in counts:
-      counts["Unassigned_Host"] = {"powered_on": 0, "powered_off": 0, "affinity_enabled_count": 0}
+      counts["Unassigned_Host"] = {
+        "powered_on": 0, "powered_off": 0, "affinity_enabled_count": 0
+      }
 
     for vm in vms_data:
       host_uuid = vm.get("host_uuid")
@@ -111,13 +114,15 @@ def fetch_vm_count_per_node(
     return {"error": f"API Request Failed: {str(e)}"}
 
 def collect_all_endpoints(config_path: str = None) -> None:
-  """Reads endpoints, collects data for all PE clusters, and logs JSON."""
+  """Reads endpoints, collects data for all PE clusters, and prints JSON."""
 
-  # 1. Resolve path to endpoints.json without using Django settings
   if not config_path:
-    # Gets the directory 3 levels up (CZMon root)
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    config_path = os.path.join(base_dir, "static", "configurations", "endpoints.json")
+    base_dir = os.path.dirname(
+      os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    config_path = os.path.join(
+      base_dir, "static", "configurations", "endpoints.json"
+    )
 
   try:
     with open(config_path, 'r') as f:
@@ -126,15 +131,20 @@ def collect_all_endpoints(config_path: str = None) -> None:
     logger.error(f"Failed to load config at {config_path}: {e}")
     sys.exit(1)
 
-  all_endpoints = [entry for zone in config_data.values() for entry in zone]
+  # Handle BOTH endpoints.json formats automatically
+  pe_endpoints = []
+  if "pes" in config_data:
+    pe_endpoints = config_data.get("pes", [])
+  else:
+    for zone, entries in config_data.items():
+      if isinstance(entries, list):
+        for entry in entries:
+          if entry.get("type", "").upper() == "PE":
+            pe_endpoints.append(entry)
 
-  # Dictionary to hold all results
   final_results = {}
 
-  for endpoint in all_endpoints:
-    if endpoint.get("type", "").upper() != "PE":
-      continue    
-
+  for endpoint in pe_endpoints:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
     user = creds.get("user", "admin")
@@ -146,10 +156,12 @@ def collect_all_endpoints(config_path: str = None) -> None:
     logger.info(f"Checking VM count per node for cluster: {ip}...")
     final_results[ip] = fetch_vm_count_per_node(ip, user, pwd)
 
-  # 2. Log the final combined JSON so the framework runner can capture it
-  logger.info("VM Count Collection Results:\n%s", json.dumps(final_results, indent=2))
+  # Print pure JSON to stdout so local_processor.py can parse it
+  print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
+  # Python's logging module writes to stderr by default.
+  # This keeps our logs separate from the printed JSON on stdout.
   logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
