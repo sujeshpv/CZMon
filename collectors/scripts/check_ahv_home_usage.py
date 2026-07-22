@@ -21,10 +21,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 # --- Global Configurations ---
-DEFAULT_CVM_USER = "nutanix"
-DEFAULT_AHV_USERS = ["root", "nutant"]
-DEFAULT_PASSWORDS = ["nutanix/4u", "Nutanix.123", "RDMCluster.123"]
-
 # The interactive shell needs time to render the prompt and menu
 SHELL_PROMPT_DELAY = 2
 # Running 'hostssh' triggers execution across every node in the cluster
@@ -143,7 +139,7 @@ def execute_ssh_command(
 def fetch_usage_data_from_host_via_cvm(
     cluster_ip: str, 
     pe_user: str, 
-    passwords: List[str], 
+    pe_pass: str, 
     hosts_map: Dict[str, str]
 ) -> str:
   """Gathers partition data by invoking an interactive shell on the CVM.
@@ -151,7 +147,7 @@ def fetch_usage_data_from_host_via_cvm(
   Args:
     cluster_ip: The virtual IP address of the cluster.
     pe_user: The Prism Element admin user.
-    passwords: A list of possible passwords to attempt.
+    pe_pass: The Prism Element admin password.
     hosts_map: A dictionary mapping hypervisor IPs to hostnames.
 
   Returns:
@@ -160,64 +156,56 @@ def fetch_usage_data_from_host_via_cvm(
   if not hosts_map:
     return ""
 
-  for user in [DEFAULT_CVM_USER, pe_user]:
-    for pwd in passwords:
-      try:
-        output = execute_ssh_command(
-            cluster_ip, 22, user, pwd, "hostssh 'df -P -h'", is_cvm=True
-        )
-        if "%" in output and "not allowed" not in output:
-          return output
-      except Exception as e:
-        logger.error(
-            f"CVM SSH strategy failed for user {user} on {cluster_ip}: {e}"
-        )
-        continue
+  try:
+    output = execute_ssh_command(
+        cluster_ip, 22, pe_user, pe_pass, "hostssh 'df -P -h'", is_cvm=True
+    )
+    if "%" in output and "not allowed" not in output:
+      return output
+  except Exception as e:
+    logger.error(
+        f"CVM SSH strategy failed for user {pe_user} on {cluster_ip}: {e}"
+    )
 
   return ""
 
 def get_host_partition_info(
     ip: str, 
-    passwords: List[str]
+    password: str
 ) -> Dict[str, any]:
   """Connects directly to an AHV host via SSH to gather partition info.
 
   Args:
     ip: The IP address of the AHV host.
-    passwords: A list of possible passwords to attempt.
+    password: The password to authenticate with.
 
   Returns:
     A dictionary of partition metrics, or an explicit error dictionary.
   """
-  last_error = "Connection failed or timed out"
+  try:
+    output = execute_ssh_command(
+        ip, 22, "root", password, "df -P -h", is_cvm=False
+    )
 
-  for user in DEFAULT_AHV_USERS:
-    port = 22 if user == "root" else 2223
-    for pwd in passwords:
-      try:
-        output = execute_ssh_command(
-            ip, port, user, pwd, "df -P -h", is_cvm=False
-        )
+    partitions = {}
+    for line in output.splitlines():
+      parts = line.split()
+      if (len(parts) >= 6 and "%" in parts[-2] 
+          and not line.startswith("Filesystem")):
+        mount_point = parts[-1]
+        partitions[mount_point] = {
+          "total": parts[-5],
+          "available": parts[-3],
+          "usage": parts[-2]
+        }
 
-        partitions = {}
-        for line in output.splitlines():
-          parts = line.split()
-          if (len(parts) >= 6 and "%" in parts[-2] 
-              and not line.startswith("Filesystem")):
-            mount_point = parts[-1]
-            partitions[mount_point] = {
-              "total": parts[-5],
-              "available": parts[-3],
-              "usage": parts[-2]
-            }
+    if partitions:
+      return partitions
+  except Exception as e:
+    logger.error(f"Direct AHV SSH failed for {ip} with user root: {e}")
+    return {"error": f"SSH Collection Failed: {e}"}
 
-        if partitions:
-          return partitions
-      except Exception as e:
-        last_error = str(e)
-        logger.error(f"Direct AHV SSH failed for {ip} with user {user}: {e}")
-
-  return {"error": f"SSH Collection Failed: {last_error}"}
+  return {"error": "SSH Collection Failed: No valid output returned"}
 
 def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
   """Parses raw terminal df output into a structured dictionary.
@@ -282,7 +270,7 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
 
   return results
 
-def collect_host_partition_usage(
+def collect_cluster_partition_usage(
     cluster_ip: str, 
     pe_user: str, 
     pe_pass: str
@@ -297,7 +285,6 @@ def collect_host_partition_usage(
   Returns:
     A dictionary containing the cluster name and its collected host metrics.
   """
-  passwords = list(dict.fromkeys([pe_pass] + DEFAULT_PASSWORDS))
   cluster_name, hosts_map = get_cluster_info(cluster_ip, pe_user, pe_pass)
 
   if not cluster_name or not hosts_map:
@@ -309,14 +296,14 @@ def collect_host_partition_usage(
 
   host_results = []
   cvm_output = fetch_usage_data_from_host_via_cvm(
-      cluster_ip, pe_user, passwords, hosts_map
+      cluster_ip, pe_user, pe_pass, hosts_map
   )
 
   if cvm_output:
     host_results = parse_cvm_output(cvm_output, hosts_map)
   else:
     for ip, name in hosts_map.items():
-      usage = get_host_partition_info(ip, passwords)
+      usage = get_host_partition_info(ip, pe_pass)
       host_results.append({name: usage})
 
   # Identify any hosts that failed to return valid data
@@ -367,7 +354,7 @@ def fetch_ahv_partition_usage(config_path: Optional[str] = None) -> None:
       continue
 
     logger.info(f"Fetching AHV host partition usage for IP: {ip}...")
-    result = collect_host_partition_usage(ip, user, pwd)
+    result = collect_cluster_partition_usage(ip, user, pwd)
 
     for cluster_name, hosts_data in result.items():
       obj, created = AhvHomeUsage.objects.update_or_create(
