@@ -1,11 +1,10 @@
-"""Gets the powered on/off VM counts and affinity status per host in a Nutanix cluster.
+"""Checks the powered on/off VM counts and affinity status per node in a Nutanix cluster.
 
 This script connects to the Nutanix Prism API to map each VM to its
 corresponding host and tally the power states and affinity settings.
+It is designed to run independently and log JSON for the framework to ingest.
 """
 
-import argparse
-import getpass
 import json
 import logging
 import os
@@ -13,48 +12,48 @@ import sys
 
 import requests
 import urllib3
-import django
 
 # Disable insecure request warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger(__name__)
 
-def get_vm_count_per_host(
+def fetch_vm_count_per_node(
   cluster_ip: str,
   username: str,
   password: str,
-) -> str:
-  """Connects to Nutanix Prism API to get VM counts and affinity status per host."""
+) -> dict:
+  """Connects to Nutanix Prism API to get VM counts and affinity status per node.
+
+  Args:
+    cluster_ip (str): The Prism Element Cluster IP or FQDN.
+    username (str): The Prism Element Username for authentication.
+    password (str): The Prism Element Password for authentication.
+
+  Returns:
+    dict: A dictionary containing the cluster name and a count
+          of powered_on, powered_off, and affinity_enabled VMs per node.
+          Returns an error dictionary if the request fails.
+  """
   base_url = f"https://{cluster_ip}:9440/api/nutanix/v2.0"
   auth = (username, password)
   headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
   try:
-    # 1. Get cluster info to extract the cluster name
     cluster_resp = requests.get(
-      f"{base_url}/cluster",
-      auth=auth,
-      headers=headers,
-      verify=False,
-      timeout=15,
+      f"{base_url}/cluster", auth=auth, headers=headers, verify=False, timeout=15
     )
     cluster_resp.raise_for_status()
     cluster_name = cluster_resp.json().get("name", "Unknown Cluster")
 
-    # 2. Get hosts to map host_uuid to SVM IP
     hosts_resp = requests.get(
-      f"{base_url}/hosts",
-      auth=auth,
-      headers=headers,
-      verify=False,
-      timeout=15,
+      f"{base_url}/hosts", auth=auth, headers=headers, verify=False, timeout=15
     )
     hosts_resp.raise_for_status()
     hosts_data = hosts_resp.json().get("entities", [])
 
-    host_map = {}  # Mapping of host_uuid -> svm_ip
-    counts = {}    # Output dictionary for holding the SVM counts
+    host_map = {}
+    counts = {}
 
     for host in hosts_data:
       host_uuid = host.get("uuid") or host.get("host_uuid") or host.get("id")
@@ -70,30 +69,16 @@ def get_vm_count_per_host(
 
       if host_uuid and svm_ip:
         host_map[host_uuid] = svm_ip
-        counts[svm_ip] = {
-          "powered_on": 0, 
-          "powered_off": 0, 
-          "affinity_enabled_count": 0
-        }
+        counts[svm_ip] = {"powered_on": 0, "powered_off": 0, "affinity_enabled_count": 0}
 
-    # 3. Get all VMs
     vms_resp = requests.get(
-      f"{base_url}/vms",
-      auth=auth,
-      headers=headers,
-      verify=False,
-      timeout=15,
+      f"{base_url}/vms", auth=auth, headers=headers, verify=False, timeout=15
     )
     vms_resp.raise_for_status()
     vms_data = vms_resp.json().get("entities", [])
 
-    # 4. Count the VMs per SVM based on power state and affinity
     if "Unassigned_Host" not in counts:
-      counts["Unassigned_Host"] = {
-        "powered_on": 0, 
-        "powered_off": 0, 
-        "affinity_enabled_count": 0
-      }
+      counts["Unassigned_Host"] = {"powered_on": 0, "powered_off": 0, "affinity_enabled_count": 0}
 
     for vm in vms_data:
       host_uuid = vm.get("host_uuid")
@@ -117,34 +102,34 @@ def get_vm_count_per_host(
     ):
       del counts["Unassigned_Host"]
 
-    # 5. Format the final output
     output = {"Cluster_name": cluster_name}
     output.update(counts)
-
-    return json.dumps(output, indent=2)
+    return output
 
   except requests.exceptions.RequestException as e:
     logger.error(f"API Request Failed for {cluster_ip}: {e}")
-    return json.dumps({"error": f"API Request Failed: {str(e)}"}, indent=2)
+    return {"error": f"API Request Failed: {str(e)}"}
 
-def fetch_vm_count_collection(config_path: str = None) -> None:
-  """Reads endpoints from config and persists VM Count per host to DB."""
-  from django.conf import settings
-  from coreapp.models import VmCountPerHost
+def collect_all_endpoints(config_path: str = None) -> None:
+  """Reads endpoints, collects data for all PE clusters, and logs JSON."""
 
+  # 1. Resolve path to endpoints.json without using Django settings
   if not config_path:
-    config_path = os.path.join(
-      settings.BASE_DIR, "static", "configurations", "endpoints.json"
-    )
+    # Gets the directory 3 levels up (CZMon root)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    config_path = os.path.join(base_dir, "static", "configurations", "endpoints.json")
 
   try:
     with open(config_path, 'r') as f:
       config_data = json.load(f)
   except Exception as e:
-    logger.error(f"Failed to load config: {e}")
-    return
+    logger.error(f"Failed to load config at {config_path}: {e}")
+    sys.exit(1)
 
   all_endpoints = [entry for zone in config_data.values() for entry in zone]
+
+  # Dictionary to hold all results
+  final_results = {}
 
   for endpoint in all_endpoints:
     if endpoint.get("type", "").upper() != "PE":
@@ -158,38 +143,17 @@ def fetch_vm_count_collection(config_path: str = None) -> None:
     if not ip:
       continue
 
-    logger.info(f"Checking VM count per host for cluster: {ip}...")
+    logger.info(f"Checking VM count per node for cluster: {ip}...")
+    final_results[ip] = fetch_vm_count_per_node(ip, user, pwd)
 
-    try:
-      result_json_str = get_vm_count_per_host(ip, user, pwd)
-      result_dict = json.loads(result_json_str)
-    except Exception as e:
-      logger.error(f"Failed to process {ip}: {e}")
-      result_dict = {"error": f"Data Processing Failed: {str(e)}"}
-
-    cluster_name = result_dict.get("Cluster_name", ip)
-
-    try:
-      obj, created = VmCountPerHost.objects.update_or_create(
-        cluster_ip=ip,
-        defaults={
-          "cluster_name": cluster_name,
-          "status_data": result_dict,
-        }
-      )
-      action = "Created" if created else "Updated"
-      logger.info(f"{action} DB record for VM count on {cluster_name}")
-    except Exception as e:
-      logger.error(f"Failed to save DB record for {ip}: {e}")
-
+  # 2. Log the final combined JSON so the framework runner can capture it
+  logger.info("VM Count Collection Results:\n%s", json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
-  os.environ.setdefault("DJANGO_SETTINGS_MODULE", "czmon.settings")
-  django.setup()
-  
   logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
   )
 
-  fetch_vm_count_collection()
+  collect_all_endpoints()
+
