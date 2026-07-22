@@ -1,14 +1,6 @@
 {
   "check_pgw_status": {
-    "description": "Runs local python script for PGW Status (Demo)",
-    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
-  },
-  "check_vm_power_states": {
-    "description": "Checks the powered on/off VM counts and affinity status on all PE clusters.",
-    "command": [
-      "/home/nutanix/CZMon/venv/bin/python3",
-      "/home/nutanix/CZMon/collectors/scripts/check_vm_power_states.py"
-    ]
+  "description": "Runs local python script for PGW Status (Demo)",
+  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
   }
 }
-
