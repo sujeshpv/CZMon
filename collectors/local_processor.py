@@ -12,12 +12,10 @@ import subprocess
 from common.logger.logger import setup_logger
 from common.exceptions.exceptions import CZMonError
 
-# --- ADDED: Django imports for framework-level DB saving ---
 import django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "czmon.settings")
 django.setup()
 from coreapp.models import VmCountPerHost
-# -----------------------------------------------------------
 
 LOGGER = setup_logger(__name__)
 
@@ -91,7 +89,6 @@ def run_local_commands():
             LOGGER.error(
               f"Database error saving {task_name}: {db_err}"
             )
-        # ---------------------------------------------------
 
     except Exception as e:
       LOGGER.error(f"Failed to execute command: {e}")
