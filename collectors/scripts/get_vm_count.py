@@ -127,7 +127,7 @@ def get_vm_count_per_host(
     logger.error(f"API Request Failed for {cluster_ip}: {e}")
     return json.dumps({"error": f"API Request Failed: {str(e)}"}, indent=2)
 
-def run_vm_count_collection(config_path: str = None) -> None:
+def fetch_vm_count_collection(config_path: str = None) -> None:
   """Reads endpoints from config and persists VM Count per host to DB."""
   from django.conf import settings
   from coreapp.models import VmCountPerHost
@@ -192,4 +192,4 @@ if __name__ == "__main__":
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
   )
 
-  run_vm_count_collection()
+  fetch_vm_count_collection()
