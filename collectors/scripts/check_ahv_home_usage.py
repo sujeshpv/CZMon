@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 # --- Global Configurations ---
 DEFAULT_CVM_USER = "nutanix"
+DEFAULT_AHV_USERS = ["root", "nutant"]
+DEFAULT_PASSWORDS = ["nutanix/4u", "Nutanix.123", "RDMCluster.123"]
 
 # The interactive shell needs time to render the prompt and menu
 SHELL_PROMPT_DELAY = 2
@@ -73,13 +75,78 @@ def get_cluster_info(
     logger.error(f"Error fetching hosts from API for {cluster_ip}: {e}")
     return cluster_name, {}
 
-def run_cvm_ssh_strategy(
+def execute_ssh_command(
+    ip: str,
+    port: int,
+    username: str,
+    password: str,
+    command: str,
+    is_cvm: bool = False
+) -> str:
+  """Establishes an SSH connection and executes a command.
+
+  Args:
+    ip: Target IP address.
+    port: SSH port.
+    username: SSH username.
+    password: SSH password.
+    command: Command to execute.
+    is_cvm: Whether to use interactive PTY bypass for CVMs.
+
+  Returns:
+    The string output of the command. Raises Exception on failure.
+  """
+  client = paramiko.SSHClient()
+  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  try:
+    client.connect(
+        ip, username=username, password=password, port=port, 
+        timeout=15, auth_timeout=15
+    )
+    if is_cvm:
+      shell = client.invoke_shell()
+      time.sleep(SHELL_PROMPT_DELAY)
+      out = ""
+      if shell.recv_ready():
+        out = shell.recv(8192).decode('utf-8')
+
+      if "Choice:" in out:
+        shell.send("3\n")
+        time.sleep(SHELL_PROMPT_DELAY)
+        if shell.recv_ready():
+          shell.recv(8192)
+
+      shell.send(command + "\n")
+      time.sleep(SHELL_PROMPT_DELAY)
+
+      out = ""
+      if shell.recv_ready():
+        out = shell.recv(8192).decode('utf-8')
+
+      if "password" in out.lower():
+        shell.send(password + "\n")
+
+      time.sleep(HOSTSSH_EXECUTION_DELAY)
+
+      output = ""
+      while shell.recv_ready():
+        output += shell.recv(8192).decode("utf-8")
+        time.sleep(BUFFER_POLL_DELAY)
+    else:
+      _, stdout, _ = client.exec_command(command)
+      output = stdout.read().decode('utf-8').strip()
+
+    return output
+  finally:
+    client.close()
+
+def fetch_usage_data_from_host_via_cvm(
     cluster_ip: str, 
     pe_user: str, 
     passwords: List[str], 
     hosts_map: Dict[str, str]
-) -> Optional[str]:
-  """Tier 1: Gathers partition data by invoking an interactive shell on CVM.
+) -> str:
+  """Gathers partition data by invoking an interactive shell on the CVM.
 
   Args:
     cluster_ip: The virtual IP address of the cluster.
@@ -88,60 +155,17 @@ def run_cvm_ssh_strategy(
     hosts_map: A dictionary mapping hypervisor IPs to hostnames.
 
   Returns:
-    The raw text output from the hostssh command, or None if failed.
+    The raw text output from the hostssh command, or a blank string if failed.
   """
   if not hosts_map:
-    return None
-
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    return ""
 
   for user in [DEFAULT_CVM_USER, pe_user]:
     for pwd in passwords:
       try:
-        client.connect(
-            cluster_ip, 
-            username=user, 
-            password=pwd, 
-            timeout=15, 
-            auth_timeout=15
+        output = execute_ssh_command(
+            cluster_ip, 22, user, pwd, "hostssh 'df -P -h'", is_cvm=True
         )
-
-        shell = client.invoke_shell()
-        time.sleep(SHELL_PROMPT_DELAY)
-
-        out = ""
-        if shell.recv_ready():
-          out = shell.recv(8192).decode('utf-8')
-
-        # Bypass the restricted NuService Menu if present
-        if "Choice:" in out:
-          shell.send("3\n")
-          time.sleep(SHELL_PROMPT_DELAY)
-          if shell.recv_ready():
-            shell.recv(8192)
-
-        # Execute hostssh to check ALL partitions
-        shell.send("hostssh 'df -P -h'\n")
-        time.sleep(SHELL_PROMPT_DELAY)
-
-        out = ""
-        if shell.recv_ready():
-          out = shell.recv(8192).decode('utf-8')
-
-        if "password" in out.lower():
-          shell.send(pwd + "\n")
-
-        # Wait for the hostssh command to execute across all hypervisors
-        time.sleep(HOSTSSH_EXECUTION_DELAY)
-
-        output = ""
-        while shell.recv_ready():
-          output += shell.recv(8192).decode("utf-8")
-          time.sleep(BUFFER_POLL_DELAY)
-
-        client.close()
-
         if "%" in output and "not allowed" not in output:
           return output
       except Exception as e:
@@ -150,41 +174,30 @@ def run_cvm_ssh_strategy(
         )
         continue
 
-  return None
+  return ""
 
 def get_host_partition_info(
     ip: str, 
     passwords: List[str]
 ) -> Dict[str, any]:
-  """Tier 2: Fallback to direct AHV SSH if the CVM strategy fails.
+  """Connects directly to an AHV host via SSH to gather partition info.
 
   Args:
     ip: The IP address of the AHV host.
     passwords: A list of possible passwords to attempt.
 
   Returns:
-    A dictionary of partition metrics, or an explicit error dictionary capturing
-    the exception if the connection fails.
+    A dictionary of partition metrics, or an explicit error dictionary.
   """
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
   last_error = "Connection failed or timed out"
 
-  for user, port in [("root", 22), ("nutant", 2223)]:
+  for user in DEFAULT_AHV_USERS:
+    port = 22 if user == "root" else 2223
     for pwd in passwords:
       try:
-        client.connect(
-            ip, 
-            username=user, 
-            password=pwd, 
-            port=port, 
-            timeout=5, 
-            auth_timeout=5
+        output = execute_ssh_command(
+            ip, port, user, pwd, "df -P -h", is_cvm=False
         )
-        _, stdout, _ = client.exec_command("df -P -h")
-        output = stdout.read().decode('utf-8').strip()
-        client.close()
 
         partitions = {}
         for line in output.splitlines():
@@ -204,7 +217,6 @@ def get_host_partition_info(
         last_error = str(e)
         logger.error(f"Direct AHV SSH failed for {ip} with user {user}: {e}")
 
-  # Return the specific exception instead of a generic string
   return {"error": f"SSH Collection Failed: {last_error}"}
 
 def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
@@ -270,12 +282,12 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
 
   return results
 
-def collect_cluster_partition_usage(
+def collect_host_partition_usage(
     cluster_ip: str, 
     pe_user: str, 
     pe_pass: str
 ) -> Dict:
-  """Orchestrates partition data collection for a single cluster.
+  """Orchestrates partition data collection for hosts within a cluster.
 
   Args:
     cluster_ip: The virtual IP address of the cluster.
@@ -285,13 +297,10 @@ def collect_cluster_partition_usage(
   Returns:
     A dictionary containing the cluster name and its collected host metrics.
   """
-  passwords = list(
-      dict.fromkeys([pe_pass, "nutanix/4u", "Nutanix.123", "RDMCluster.123"])
-  )
+  passwords = list(dict.fromkeys([pe_pass] + DEFAULT_PASSWORDS))
   cluster_name, hosts_map = get_cluster_info(cluster_ip, pe_user, pe_pass)
 
   if not cluster_name or not hosts_map:
-    # Fallback to IP if name resolution entirely failed
     fallback = cluster_name if cluster_name else cluster_ip
     logger.error(
         f"Halting processing for {fallback} due to missing metadata."
@@ -299,13 +308,14 @@ def collect_cluster_partition_usage(
     return {fallback: [{"error": "Could not fetch hosts map from API"}]}
 
   host_results = []
-  cvm_output = run_cvm_ssh_strategy(cluster_ip, pe_user, passwords, hosts_map)
+  cvm_output = fetch_usage_data_from_host_via_cvm(
+      cluster_ip, pe_user, passwords, hosts_map
+  )
 
   if cvm_output:
     host_results = parse_cvm_output(cvm_output, hosts_map)
   else:
     for ip, name in hosts_map.items():
-      # usage will now be actual data OR an exact exception {"error": "..."}
       usage = get_host_partition_info(ip, passwords)
       host_results.append({name: usage})
 
@@ -321,8 +331,8 @@ def collect_cluster_partition_usage(
 
   return {cluster_name: host_results}
 
-def run_ahv_home_usage(config_path: Optional[str] = None) -> None:
-  """Reads endpoints from config and persists usage data to DB.
+def fetch_ahv_partition_usage(config_path: Optional[str] = None) -> None:
+  """Fetches endpoints from config and triggers partition data collection.
 
   Args:
     config_path: Optional override for the endpoints JSON config file.
@@ -356,8 +366,8 @@ def run_ahv_home_usage(config_path: Optional[str] = None) -> None:
     if not ip:
       continue
 
-    logger.info(f"Checking AHV partition usage for cluster: {ip}...")
-    result = collect_cluster_partition_usage(ip, user, pwd)
+    logger.info(f"Fetching AHV host partition usage for IP: {ip}...")
+    result = collect_host_partition_usage(ip, user, pwd)
 
     for cluster_name, hosts_data in result.items():
       obj, created = AhvHomeUsage.objects.update_or_create(
@@ -375,4 +385,4 @@ if __name__ == "__main__":
       level=logging.INFO, 
       format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
   )
-  run_ahv_home_usage()
+  fetch_ahv_partition_usage()
