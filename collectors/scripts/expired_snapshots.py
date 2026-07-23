@@ -1,106 +1,124 @@
-"""Module to verify Expired Snapshots across all PCs (Ticket ENG-924183)."""
+"""Module to verify Expired Snapshots across all PCs and save to DB."""
 
 import json
-import os
+import paramiko
 
-from typing import Any, Dict, List
-
-from collectors.api_processor import ApiProcessor
-from common.connection.ssh_connect import Ssh
-
-class ExpiredSnapshotsVerification:
-  """Verifies system-retained recovery points via long_expiry_time_snapshot_util.
-
-  Attributes:
-    api: Instance of ApiProcessor for configuration and credentials.
-    testbed_config: Dictionary containing loaded endpoints.
-  """
-
-  def __init__(self):
-    """Initializes the check environment and loads cluster config."""
-    self.api = ApiProcessor()
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_path = os.path.join(
-      base_dir, 'static', 'configurations', 'endpoints.json'
-    )
-    self.testbed_config = self.api.load_config(config_path)
-    self.api.config = self.testbed_config
-
-  def _parse_raw_output(self, raw_text: str) -> List[Dict[str, Any]]:
-    """Parses the pipe-delimited text table into a list of dictionaries.
-
-    Args:
-      raw_text: The raw string output from the CVM command.
-
-    Returns:
-      A list of formatted snapshot objects.
-    """
-    parsed_rows = []
-    lines = raw_text.strip().split('\n')
-
-    if len(lines) <= 1:
-      return parsed_rows
-
-    for line in lines[1:]:
-      # Split by pipe and remove extra whitespace
-      parts = [p.strip() for p in line.split('|')]
-      if len(parts) >= 7:
-        parsed_rows.append({
-          "vm_name": parts[0],
-          "entity_type": parts[1],
-          "entity_uuid": parts[2],
-          "snapshot_uuid": parts[3],
-          "rp_name": parts[4],
-          "created_at": parts[5],
-          "expired_at": parts[6]
-        })
+def parse_raw_output(raw_text: str) -> list:
+  """Parses the pipe-delimited text table into a list of dictionaries."""
+  parsed_rows = []
+  if not raw_text:
     return parsed_rows
 
-  def run_verification(self) -> Dict[str, Any]:
-    """Executes the snapshot utility and returns structured JSON.
+  lines = raw_text.strip().split('\n')
+  if len(lines) <= 1:
+    return parsed_rows
 
-    Returns:
-      A dictionary with a summary and a list of parsed expired snapshots.
-    """
-    results = {}
-    pcs = self.testbed_config.get('pcs', [])
+  for line in lines[1:]:
+    parts = [p.strip() for p in line.split('|')]
+    if len(parts) >= 7:
+      parsed_rows.append({
+        "vm_name": parts[0],
+        "entity_type": parts[1],
+        "entity_uuid": parts[2],
+        "snapshot_uuid": parts[3],
+        "rp_name": parts[4],
+        "created_at": parts[5],
+        "expired_at": parts[6]
+      })
+  return parsed_rows
 
-    for pc in pcs:
-      ip_addr = pc.get('ip')
-      try:
-        creds = self.api.get_credentials(ip_addr)
-        ssh = Ssh(
-          remote_ip=ip_addr,
-          username=creds['user'],
-          password=creds['password']
-        )
+def verify_expired_snapshots(ip: str, user: str, password: str) -> tuple:
+  """Executes the snapshot utility via SSH."""
+  try:
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-        # Execute command
-        cmd = (
-          'python /home/nutanix/ncc/bin/long_expiry_time_snapshot_util.py '
-          '--expired_rp list_recovery_point --show_datetime'
-        )
-        raw_output = ssh.execute(cmd)
+    client.connect(hostname=ip, username=user, password=password, timeout=15)
 
-        expired_list = self._parse_raw_output(raw_output)
+    cmd = (
+      'python /home/nutanix/ncc/bin/long_expiry_time_snapshot_util.py '
+      '--expired_rp list_recovery_point --show_datetime'
+    )
+    stdin, stdout, stderr = client.exec_command(cmd)
+    raw_output = stdout.read().decode('utf-8')
+    client.close()
 
-        results[ip_addr] = {
-          "summary": {
-            "total_expired_snapshots": len(expired_list),
-            "oldest_snapshot_date": expired_list[0]['created_at'] if expired_list else "N/A",
-            "status": "CRITICAL" if len(expired_list) > 30 else "OK"
-          },
-          "expired_snapshots": expired_list
-        }
+    expired_list = parse_raw_output(raw_output)
 
-        ssh.close_session()
+    summary = {
+      "total_expired_snapshots": len(expired_list),
+      "oldest_snapshot_date": expired_list[0]['created_at'] if expired_list else "N/A",
+      "status": "CRITICAL" if len(expired_list) > 30 else "OK"
+    }
 
-      except Exception as e:
-        print(f'Failed snapshot verification for PC {ip_addr}: {e}')
-        results[ip_addr] = {"error": str(e)}
+    return summary, expired_list, True
 
-    return results
+  except Exception as e:
+    summary = {"error": f"Paramiko SSH failed: {e}"}
+    return summary, [], False
 
-if __name__ == '__main__':
-  verifier = ExpiredSnapshotsVerification()
-  print(json.dumps(verifier.run_verification(), indent=2))
+def run_snapshot_collection(config_path=None):
+  """Reads endpoints from config and persists expired snapshots to DB."""
+
+  # 1. SETUP DJANGO ENVIRONMENT
+  import os
+  import sys
+  import django
+
+  script_dir = os.path.dirname(os.path.abspath(__file__))
+  base_dir = os.path.dirname(os.path.dirname(script_dir))
+  if base_dir not in sys.path:
+    sys.path.append(base_dir)
+
+  os.environ.setdefault("DJANGO_SETTINGS_MODULE", "czmon.settings")
+
+  from django.apps import apps
+  if not apps.ready:
+    django.setup()
+
+  # 2. IMPORT MODELS
+  from django.conf import settings
+  from coreapp.models import ExpiredSnapshot
+
+  if not config_path:
+    config_path = os.path.join(
+      settings.BASE_DIR, "static", "configurations", "endpoints.json"
+    )
+
+  try:
+    with open(config_path, 'r') as f:
+      config_data = json.load(f)
+  except Exception as e:
+    print(f"Failed to load config: {str(e)}")
+    return
+
+  pcs = config_data.get('pcs', [])
+
+  for pc in pcs:
+    ip = pc.get("ip")
+    if not ip:
+      continue
+
+    user = pc.get('ssh_user', 'nutanix')
+    pwd = pc.get('ssh_password', 'Pitadmin@1234')
+
+    summary_data, expired_list, is_successful = verify_expired_snapshots(
+      ip, user, pwd
+    )
+
+    obj, created = ExpiredSnapshot.objects.update_or_create(
+      ip_address=ip,
+      defaults={
+        "is_successful": is_successful,
+        "summary_data": summary_data,
+        "snapshots_data": expired_list,
+      }
+    )
+
+    action = "Created" if created else "Updated"
+    status_text = "Success" if is_successful else "Failed"
+    print(f"{action} DB record for {ip} -> {status_text}")
+
+if __name__ == "__main__":
+  run_snapshot_collection()
+
