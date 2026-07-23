@@ -61,9 +61,6 @@ def fetch_vm_count_per_node(
         or host.get("controller_vm_external_ip")
         or host.get("service_vm_ip")
         or host.get("controller_vm_ip")
-        or host.get("hypervisor_address")
-        or host.get("name")
-        or host_uuid
       )
 
       if host_uuid and svm_ip:
