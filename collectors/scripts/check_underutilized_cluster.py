@@ -16,15 +16,25 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Configurations ---
 MEMORY_UNDERUTILIZATION_THRESHOLD_PCT = 20.0
-DEFAULT_USERNAME = "admin"
-DEFAULT_PASSWORD = "Nutanix.123"
+DEF_UNAME = "admin"
+DEF_PWD = "Nutanix.123"
 
 logger = logging.getLogger(__name__)
 
 def check_cluster_utilization(
   cluster_ip: str, username: str, password: str
 ) -> dict:
-  """Connects to Nutanix Prism API to get utilization stats."""
+  """Connects to Nutanix Prism API to get utilization stats.
+
+  Args:
+    cluster_ip (str): The Prism Element Cluster IP or FQDN.
+    username (str): The Prism Element Username for authentication.
+    password (str): The Prism Element Password for authentication.
+
+  Returns:
+    dict: A dictionary containing the cluster IP, CPU, Memory, IOPS,
+          and a boolean flag indicating if the cluster is underutilized.
+  """
   base_url = f"https://{cluster_ip}:9440/api/nutanix/v2.0"
   auth = (username, password)
   headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -62,7 +72,12 @@ def check_cluster_utilization(
     return {"cluster_ip": cluster_ip, "error_message": str(e)}
 
 def run_utilization_check(config_path: str = None) -> None:
-  """Reads endpoints, collects utilization stats, and prints JSON."""
+  """Reads endpoints, collects utilization stats, and prints JSON.
+
+  Args:
+    config_path (str, optional): Path to the endpoints JSON config file. 
+                                 Defaults to None (auto-resolves path).
+  """
   if not config_path:
     base_dir = os.path.dirname(
       os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -94,9 +109,9 @@ def run_utilization_check(config_path: str = None) -> None:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
 
-    # Use the new global variables as defaults
-    user = creds.get("username", creds.get("user", DEFAULT_USERNAME))
-    pwd = creds.get("password", DEFAULT_PASSWORD)
+    # Use the global variables as fallback credentials
+    user = creds.get("username", creds.get("user", DEF_UNAME))
+    pwd = creds.get("password", DEF_PWD)
 
     if not ip:
       continue
