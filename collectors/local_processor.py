@@ -2,8 +2,7 @@
 Executes local commands defined in the local CLI catalog configuration.
 
 This module reads a JSON configuration file containing a catalog of commands
-and executes them locally on the system. It handles both standard shell
-commands and local Python scripts, capturing output and persisting to DB.
+and executes them locally on the system, parsing and routing output to the DB.
 """
 
 import os
@@ -46,15 +45,11 @@ class LocalProcessor:
     """
     Load configuration from JSON file.
 
-    Parameters
-    ----------
-    config_path : str
-      Path to configuration JSON file.
+    Args:
+      config_path (str): Path to configuration JSON file.
 
-    Returns
-    -------
-    dict
-      Parsed configuration.
+    Returns:
+      dict: Parsed configuration.
     """
     try:
       with open(config_path, "r") as f:
@@ -104,7 +99,6 @@ class LocalProcessor:
           if stdout_text:
             LOGGER.info(f"Script Output:\n{stdout_text}")
 
-            # Use dynamic DB insertion mirroring ApiProcessor & CliProcessor
             try:
               data = json.loads(stdout_text)
               if isinstance(data, dict):
@@ -158,4 +152,7 @@ def run_local_commands():
     error = CZMonError("Fatal error executing local commands", cause=err)
     LOGGER.error(error)
     raise error
+
+if __name__ == "__main__":
+  run_local_commands()
 
