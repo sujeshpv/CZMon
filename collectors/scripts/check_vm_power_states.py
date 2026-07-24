@@ -17,6 +17,10 @@ import urllib3
 # Disable insecure request warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# --- Global Configurations ---
+DEF_UNAME = "admin"
+DEF_PWD = "Nutanix.123"
+
 logger = logging.getLogger(__name__)
 
 def fetch_vm_count_per_node(
@@ -111,8 +115,12 @@ def fetch_vm_count_per_node(
     return {"error": f"API Request Failed: {str(e)}"}
 
 def collect_all_endpoints(config_path: str = None) -> None:
-  """Reads endpoints, collects data for all PE clusters, and prints JSON."""
+  """Reads endpoints, collects data for all PE clusters, and prints JSON.
 
+  Args:
+    config_path (str, optional): Path to the endpoints JSON config file. 
+                                 Defaults to None (auto-resolves path).
+  """
   if not config_path:
     base_dir = os.path.dirname(
       os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -144,8 +152,10 @@ def collect_all_endpoints(config_path: str = None) -> None:
   for endpoint in pe_endpoints:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
-    user = creds.get("user", "admin")
-    pwd = creds.get("password", "Nutanix.123")
+
+    # Use global variables as fallback credentials
+    user = creds.get("user", DEF_UNAME)
+    pwd = creds.get("password", DEF_PWD)
 
     if not ip:
       continue
