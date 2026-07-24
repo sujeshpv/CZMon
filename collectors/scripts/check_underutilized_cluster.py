@@ -14,8 +14,10 @@ import urllib3
 # Disable insecure request warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Threshold for underutilization alert
+# --- Global Configurations ---
 MEMORY_UNDERUTILIZATION_THRESHOLD_PCT = 20.0
+DEFAULT_USERNAME = "admin"
+DEFAULT_PASSWORD = "Nutanix.123"
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +93,10 @@ def run_utilization_check(config_path: str = None) -> None:
   for endpoint in all_endpoints:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
-    user = creds.get("username", creds.get("user", "admin"))
-    pwd = creds.get("password", "Nutanix.123")
+
+    # Use the new global variables as defaults
+    user = creds.get("username", creds.get("user", DEFAULT_USERNAME))
+    pwd = creds.get("password", DEFAULT_PASSWORD)
 
     if not ip:
       continue
