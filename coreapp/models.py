@@ -71,15 +71,3 @@ class AhvHomeUsage(models.Model):
     return f"{self.cluster_name} - Checked: {self.last_checked}"
 
 
-
-class ExpiredSnapshot(models.Model):
-  """Database model to store Expired Snapshots data."""
-  ip_address = models.CharField(max_length=50, unique=True)
-  is_successful = models.BooleanField(default=False)
-  summary_data = models.JSONField(null=True, blank=True)
-  snapshots_data = models.JSONField(null=True, blank=True)
-  last_updated = models.DateTimeField(auto_now=True)
-
-  def __str__(self):
-    return f"{self.ip_address} - {'Success' if self.is_successful else 'Failed'}"
-
