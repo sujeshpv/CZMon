@@ -91,7 +91,7 @@ def run_snapshot_collection(config_path=None):
 
     summary_data, expired_list, is_successful = verify_expired_snapshots(ip, user, pwd)
 
-!
+
     results[ip] = {
       "is_successful": is_successful,
       "summary_data": summary_data,
