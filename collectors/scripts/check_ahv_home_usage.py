@@ -1,7 +1,8 @@
 """Checks partition usage on AHV hosts.
 
 This script utilizes a two-tier connection strategy to securely gather 
-partition metrics across AHV hosts.
+partition metrics across AHV hosts. It is designed to run independently
+and print pure JSON for the CZMon framework.
 """
 
 import json
@@ -12,7 +13,6 @@ import sys
 import time
 from typing import Dict, List, Optional, Tuple
 
-import django
 import paramiko
 import requests
 import urllib3
@@ -21,28 +21,25 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 # --- Global Configurations ---
-# The interactive shell needs time to render the prompt and menu
+DEF_UNAME = "admin"
+DEF_PWD = "Nutanix.123"
 SHELL_PROMPT_DELAY = 2
-# Running 'hostssh' triggers execution across every node in the cluster
 HOSTSSH_EXECUTION_DELAY = 15
-# Polling delay while waiting for the output buffer to fill
 BUFFER_POLL_DELAY = 1
 
 def get_cluster_info(
-    cluster_ip: str, 
-    username: str, 
-    password: str
+  cluster_ip: str, username: str, password: str
 ) -> Tuple[Optional[str], Dict[str, str]]:
   """Fetches the cluster name and host mapping from the Prism API.
 
   Args:
-    cluster_ip: The virtual IP address of the cluster.
-    username: The Prism API username.
-    password: The Prism API password.
+    cluster_ip (str): The virtual IP address of the cluster.
+    username (str): The Prism API username.
+    password (str): The Prism API password.
 
   Returns:
-    A tuple containing the cluster name (or None) and a dictionary mapping 
-    hypervisor IPs to their hostnames.
+    Tuple[Optional[str], Dict[str, str]]: A tuple containing the cluster name
+      (or None) and a dictionary mapping hypervisor IPs to their hostnames.
   """
   prism_auth = (username, password)
   cluster_name = None
@@ -72,39 +69,44 @@ def get_cluster_info(
     return cluster_name, {}
 
 def execute_ssh_command(
-    ip: str,
-    port: int,
-    username: str,
-    password: str,
-    command: str,
-    is_cvm: bool = False
+  ip: str,
+  port: int,
+  username: str,
+  password: str,
+  command: str,
+  is_cvm: bool,
 ) -> str:
   """Establishes an SSH connection and executes a command.
 
   Args:
-    ip: Target IP address.
-    port: SSH port.
-    username: SSH username.
-    password: SSH password.
-    command: Command to execute.
-    is_cvm: Whether to use interactive PTY bypass for CVMs.
+    ip (str): Target IP address to connect to.
+    port (int): SSH port.
+    username (str): SSH username.
+    password (str): SSH password.
+    command (str): Command to execute on the remote machine.
+    is_cvm (bool): Flag indicating if connection is to a Controller VM,
+      requiring interactive PTY menu handling.
 
   Returns:
-    The string output of the command. Raises Exception on failure.
+    str: The string output of the command.
   """
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
   try:
     client.connect(
-        ip, username=username, password=password, port=port, 
-        timeout=15, auth_timeout=15
+      ip,
+      username=username,
+      password=password,
+      port=port,
+      timeout=15,
+      auth_timeout=15,
     )
     if is_cvm:
       shell = client.invoke_shell()
       time.sleep(SHELL_PROMPT_DELAY)
       out = ""
       if shell.recv_ready():
-        out = shell.recv(8192).decode('utf-8')
+        out = shell.recv(8192).decode("utf-8")
 
       if "Choice:" in out:
         shell.send("3\n")
@@ -117,7 +119,7 @@ def execute_ssh_command(
 
       out = ""
       if shell.recv_ready():
-        out = shell.recv(8192).decode('utf-8')
+        out = shell.recv(8192).decode("utf-8")
 
       if "password" in out.lower():
         shell.send(password + "\n")
@@ -130,79 +132,72 @@ def execute_ssh_command(
         time.sleep(BUFFER_POLL_DELAY)
     else:
       _, stdout, _ = client.exec_command(command)
-      output = stdout.read().decode('utf-8').strip()
+      output = stdout.read().decode("utf-8").strip()
 
     return output
   finally:
     client.close()
 
 def fetch_usage_data_from_host_via_cvm(
-    cluster_ip: str, 
-    pe_user: str, 
-    pe_pass: str, 
-    hosts_map: Dict[str, str]
+  cluster_ip: str, pe_user: str, pe_pass: str, hosts_map: Dict[str, str]
 ) -> str:
   """Gathers partition data by invoking an interactive shell on the CVM.
 
   Args:
-    cluster_ip: The virtual IP address of the cluster.
-    pe_user: The Prism Element admin user.
-    pe_pass: The Prism Element admin password.
-    hosts_map: A dictionary mapping hypervisor IPs to hostnames.
+    cluster_ip (str): The virtual IP address of the cluster.
+    pe_user (str): The Prism Element admin user.
+    pe_pass (str): The Prism Element admin password.
+    hosts_map (Dict[str, str]): Map of hypervisor IPs to hostnames.
 
   Returns:
-    The raw text output from the hostssh command, or a blank string if failed.
+    str: The raw text output from the hostssh command, or an empty string.
   """
   if not hosts_map:
     return ""
 
   try:
     output = execute_ssh_command(
-        cluster_ip, 22, pe_user, pe_pass, "hostssh 'df -P -h'", is_cvm=True
+      cluster_ip, 22, pe_user, pe_pass, "hostssh 'df -P -h'", is_cvm=True
     )
     if "%" in output and "not allowed" not in output:
       return output
   except Exception as e:
-    logger.error(
-        f"CVM SSH strategy failed for user {pe_user} on {cluster_ip}: {e}"
-    )
+    logger.error(f"CVM SSH strategy failed for {cluster_ip}: {e}")
 
   return ""
 
-def get_host_partition_info(
-    ip: str, 
-    password: str
-) -> Dict[str, any]:
+def get_host_partition_info(ip: str, password: str) -> Dict[str, any]:
   """Connects directly to an AHV host via SSH to gather partition info.
 
   Args:
-    ip: The IP address of the AHV host.
-    password: The password to authenticate with.
+    ip (str): The IP address of the AHV host.
+    password (str): The password to authenticate with (root).
 
   Returns:
-    A dictionary of partition metrics, or an explicit error dictionary.
+    Dict[str, any]: A dictionary of partition metrics, or an error dictionary.
   """
   try:
     output = execute_ssh_command(
-        ip, 22, "root", password, "df -P -h", is_cvm=False
+      ip, 22, "root", password, "df -P -h", is_cvm=False
     )
-
     partitions = {}
     for line in output.splitlines():
       parts = line.split()
-      if (len(parts) >= 6 and "%" in parts[-2] 
-          and not line.startswith("Filesystem")):
+      if (
+        len(parts) >= 6
+        and "%" in parts[-2]
+        and not line.startswith("Filesystem")
+      ):
         mount_point = parts[-1]
         partitions[mount_point] = {
           "total": parts[-5],
           "available": parts[-3],
-          "usage": parts[-2]
+          "usage": parts[-2],
         }
-
     if partitions:
       return partitions
   except Exception as e:
-    logger.error(f"Direct AHV SSH failed for {ip} with user root: {e}")
+    logger.error(f"Direct AHV SSH failed for {ip} with root: {e}")
     return {"error": f"SSH Collection Failed: {e}"}
 
   return {"error": "SSH Collection Failed: No valid output returned"}
@@ -211,20 +206,17 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
   """Parses raw terminal df output into a structured dictionary.
 
   Args:
-    output: The raw multi-line string output from hostssh.
-    hosts_map: A dictionary mapping hypervisor IPs to hostnames.
+    output (str): The raw multi-line string output from hostssh.
+    hosts_map (Dict[str, str]): Map of hypervisor IPs to hostnames.
 
   Returns:
-    A structured list mapping each host to its partition metrics.
+    List[Dict]: A structured list mapping each host to its partition metrics.
   """
   results = []
   current_host = None
 
-  # Fallback host if there's only one node in the cluster
   single_node = list(hosts_map.values())[0] if len(hosts_map) == 1 else None
-
-  # Clean ANSI escape sequences
-  output = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', output)
+  output = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output)
   host_data = {}
 
   for line in output.splitlines():
@@ -245,12 +237,13 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
         current_host = hosts_map.get(ip, ip)
       continue
 
-    # Strictly parse valid df output lines
-    if ("hostssh" not in line and "Permission denied" not in line 
-        and not line.startswith("Filesystem")):
+    if (
+      "hostssh" not in line
+      and "Permission denied" not in line
+      and not line.startswith("Filesystem")
+    ):
       parts = line.split()
 
-      # Using exact negative indices to grab any partition safely
       if len(parts) >= 6 and "%" in parts[-2]:
         mount_point = parts[-1]
         usage_data = {
@@ -258,7 +251,6 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
           "available": parts[-3],
           "usage": parts[-2],
         }
-
         target_host = current_host if current_host else single_node
         if target_host:
           if target_host not in host_data:
@@ -271,32 +263,28 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> List[Dict]:
   return results
 
 def collect_cluster_partition_usage(
-    cluster_ip: str, 
-    pe_user: str, 
-    pe_pass: str
+  cluster_ip: str, pe_user: str, pe_pass: str
 ) -> Dict:
   """Orchestrates partition data collection for hosts within a cluster.
 
   Args:
-    cluster_ip: The virtual IP address of the cluster.
-    pe_user: The Prism Element admin username.
-    pe_pass: The Prism Element admin password.
+    cluster_ip (str): The virtual IP address of the cluster.
+    pe_user (str): The Prism Element admin username.
+    pe_pass (str): The Prism Element admin password.
 
   Returns:
-    A dictionary containing the cluster name and its collected host metrics.
+    Dict: A dictionary containing collected host partition usage metrics.
   """
   cluster_name, hosts_map = get_cluster_info(cluster_ip, pe_user, pe_pass)
 
   if not cluster_name or not hosts_map:
     fallback = cluster_name if cluster_name else cluster_ip
-    logger.error(
-        f"Halting processing for {fallback} due to missing metadata."
-    )
+    logger.error(f"Halting processing for {fallback} - missing metadata.")
     return {fallback: [{"error": "Could not fetch hosts map from API"}]}
 
   host_results = []
   cvm_output = fetch_usage_data_from_host_via_cvm(
-      cluster_ip, pe_user, pe_pass, hosts_map
+    cluster_ip, pe_user, pe_pass, hosts_map
   )
 
   if cvm_output:
@@ -306,70 +294,69 @@ def collect_cluster_partition_usage(
       usage = get_host_partition_info(ip, pe_pass)
       host_results.append({name: usage})
 
-  # Identify any hosts that failed to return valid data
   found_hostnames = {
-      list(d.keys())[0] for d in host_results 
-      if d and isinstance(d, dict)
+    list(d.keys())[0] for d in host_results if d and isinstance(d, dict)
   }
 
   for name in hosts_map.values():
     if name not in found_hostnames:
-      host_results.append({name: {"error": "Host missing from hostssh output"}})
+      host_results.append({name: {"error": "Host missing from hostssh"}})
 
   return {cluster_name: host_results}
 
-def fetch_ahv_partition_usage(config_path: Optional[str] = None) -> None:
+def collect_all_endpoints(config_path: Optional[str] = None) -> None:
   """Fetches endpoints from config and triggers partition data collection.
 
   Args:
-    config_path: Optional override for the endpoints JSON config file.
+    config_path (str, optional): Path to the endpoints JSON config file.
   """
-  from coreapp.models import AhvHomeUsage
-  from django.conf import settings
-
   if not config_path:
+    base_dir = os.path.dirname(
+      os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
     config_path = os.path.join(
-        settings.BASE_DIR, "static", "configurations", "endpoints.json"
+      base_dir, "static", "configurations", "endpoints.json"
     )
 
   try:
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
       config_data = json.load(f)
   except Exception as e:
     logger.error(f"Failed to load config: {e}")
-    return
+    sys.exit(1)
 
-  all_endpoints = [entry for zone in config_data.values() for entry in zone]
+  pe_endpoints = []
+  if "pes" in config_data:
+    pe_endpoints = config_data.get("pes", [])
+  else:
+    for zone, entries in config_data.items():
+      if isinstance(entries, list):
+        for entry in entries:
+          if entry.get("type", "").upper() == "PE":
+            pe_endpoints.append(entry)
 
-  for endpoint in all_endpoints:
-    if endpoint.get("type", "").upper() != "PE":
-      continue
+  final_results = {}
 
+  for endpoint in pe_endpoints:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
-    user = creds.get("user", "admin")
-    pwd = creds.get("password", "Nutanix.123")
+    user = creds.get("username", creds.get("user", DEF_UNAME))
+    pwd = creds.get("password", DEF_PWD)
 
     if not ip:
       continue
 
     logger.info(f"Fetching AHV host partition usage for IP: {ip}...")
-    result = collect_cluster_partition_usage(ip, user, pwd)
+    final_results[ip] = collect_cluster_partition_usage(ip, user, pwd)
 
-    for cluster_name, hosts_data in result.items():
-      obj, created = AhvHomeUsage.objects.update_or_create(
-        cluster_name=cluster_name,
-        defaults={"status_data": hosts_data}
-      )
-      action = "Created" if created else "Updated"
-      logger.info(f"{action} DB record for AHV usage on {cluster_name}")
+  # CRITICAL: Print pure JSON to stdout so local_processor.py can parse it
+  print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
-  os.environ.setdefault("DJANGO_SETTINGS_MODULE", "czmon.settings")
-  django.setup()
-
+  # Silent on standard framework runs to avoid false stderr pollution
   logging.basicConfig(
-      level=logging.INFO, 
-      format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    level=logging.WARNING,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
   )
-  fetch_ahv_partition_usage()
+  collect_all_endpoints()
+
