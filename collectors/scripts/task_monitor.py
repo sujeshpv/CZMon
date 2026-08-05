@@ -125,7 +125,7 @@ def get_tasks_from_pc(
 
   return {"Failed": failed_tasks, "Pending": pending_tasks}
 
-def collect_all_endpoints(config_path: str = None) -> None:
+def collect_all_pc_tasks(config_path: str = None) -> None:
   """Reads endpoints, collects tasks for PC clusters, and prints JSON.
 
   Args:
@@ -183,5 +183,5 @@ if __name__ == "__main__":
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
   )
-  collect_all_endpoints()
+  collect_all_pc_tasks()
 
