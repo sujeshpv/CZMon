@@ -304,7 +304,7 @@ def collect_cluster_partition_usage(
 
   return {cluster_name: host_results}
 
-def collect_all_endpoints(config_path: Optional[str] = None) -> None:
+def collect_all_ahv_partition_usage(config_path: Optional[str] = None) -> None:
   """Fetches endpoints from config and triggers partition data collection.
 
   Args:
@@ -358,5 +358,5 @@ if __name__ == "__main__":
     level=logging.WARNING,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
   )
-  collect_all_endpoints()
+  collect_all_ahv_partition_usage()
 
