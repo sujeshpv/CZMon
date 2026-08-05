@@ -9,7 +9,7 @@ import paramiko
 
 # --- Global Default Credentials ---
 DEF_USER = "nutanix"
-DEF_PWD = "Pitadmin@1234"
+DEF_PWD = "Nutanix.123"
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,6 @@ def run_node_tool_check(config_path: str = None) -> None:
     logger.info(f"Checking Cassandra consistency: {cluster_name} ({ip})...")
     final_results[cluster_name] = check_node_consistency(ip, user, pwd)
 
-  # Print pure JSON output to stdout for local_processor.py to capture
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":

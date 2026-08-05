@@ -14,9 +14,12 @@ import urllib3
 # Disable insecure request warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- Global Default Credentials ---
+# --- Global Configurations ---
 DEF_USER = "admin"
 DEF_PWD = "Nutanix.123"
+
+# Prefix for test VMs so anyone can easily track/change them
+VM_NAME_PREFIX = "sanity-"  
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +34,12 @@ def make_api_call(
   """Executes a direct REST API call to Prism Central.
 
   Args:
-    ip: The target Prism Central IP address.
-    method: The HTTP method (GET, POST, PUT, DELETE).
-    endpoint: The API path.
-    payload: Optional request payload dictionary.
-    user: Username for authentication.
-    pwd: Password for authentication.
+    ip (str): The target Prism Central IP address.
+    method (str): The HTTP method (GET, POST, PUT, DELETE).
+    endpoint (str): The API path to hit.
+    payload (dict, optional): Request payload dictionary. Defaults to None.
+    user (str, optional): Username for authentication. Defaults to DEF_USER.
+    pwd (str, optional): Password for authentication. Defaults to DEF_PWD.
 
   Returns:
     dict: The parsed JSON response.
@@ -66,13 +69,13 @@ def wait_for_task(
   """Polls a Nutanix task until it succeeds, fails, or times out.
 
   Args:
-    ip_address: The IP of the cluster where the task is running.
-    task_uuid: The UUID of the task to track.
-    user: Username for authentication.
-    pwd: Password for authentication.
+    ip_address (str): The IP of the cluster where the task is running.
+    task_uuid (str): The UUID of the task to track.
+    user (str): Username for authentication.
+    pwd (str): Password for authentication.
 
   Returns:
-    True if the task succeeded or no UUID was provided, False otherwise.
+    bool: True if the task succeeded or no UUID was provided, False otherwise.
   """
   if not task_uuid:
     return True
@@ -94,6 +97,8 @@ def wait_for_task(
         return False
     except Exception as e:
       logger.debug(f"Error polling task {task_uuid}: {e}")
+
+    # Mandatory hard sleep: We must pause between checks to prevent flooding the Prism Central API with hundreds of requests in a tight loop.
     time.sleep(2)
 
   return True
@@ -102,7 +107,7 @@ def run_vm_sanity(config_path: str = None) -> None:
   """Reads endpoints config, executes VM CRUD sanity check, and prints JSON.
 
   Args:
-    config_path: Optional path to endpoints.json. Defaults to None.
+    config_path (str, optional): Path to endpoints.json. Defaults to None.
   """
   if not config_path:
     base_dir = os.path.dirname(
@@ -129,7 +134,8 @@ def run_vm_sanity(config_path: str = None) -> None:
     if not ip_addr:
       continue
 
-    # Extract credentials or fallback to global defaults
+    # Prioritize UI-defined credentials from the nested config payload.
+    # Fallback to the global default variables only if the UI didn't provide them.
     creds = pc.get("credentials", {})
     user = pc.get("user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pc.get("password", creds.get("password", DEF_PWD))
@@ -146,7 +152,8 @@ def run_vm_sanity(config_path: str = None) -> None:
 
     try:
       # --- 1. CREATE VM ---
-      vm_name = f"sanity-{uuid.uuid4().hex[:4]}"
+      # Use the globally defined prefix so it can be easily tracked or changed
+      vm_name = f"{VM_NAME_PREFIX}{uuid.uuid4().hex[:4]}"
       payload = {
         "spec": {
           "name": vm_name,
@@ -171,7 +178,6 @@ def run_vm_sanity(config_path: str = None) -> None:
         vm_uuid = data["metadata"]["uuid"]
         task_uuid = data["status"]["execution_context"]["task_uuid"]
       except Exception as e:
-        # Parse uuid/task_uuid from exception if API raised on partial responses
         msg = str(e)
         u_match = re.search(r'"uuid":\s*"([^"]+)"', msg)
         t_match = re.search(r'"task_uuid":\s*"([^"]+)"', msg)
@@ -183,6 +189,10 @@ def run_vm_sanity(config_path: str = None) -> None:
       if vm_uuid:
         wait_for_task(ip_addr, task_uuid, user, pwd)
         status["vm_create_result"] = True
+
+        # Mandatory hard sleep: Even after a task reports 'SUCCEEDED', Prism Central's 
+        # backend database (Cassandra) needs a moment to fully synchronize the new entity.
+        # Without this delay, the subsequent GET request might return a 404 Not Found error.
         time.sleep(2)
 
       # --- 2. UPDATE VM ---
@@ -221,6 +231,8 @@ def run_vm_sanity(config_path: str = None) -> None:
 
       # --- 3. DELETE VM ---
       if vm_uuid:
+        # Mandatory hard sleep: Ensures the previous PUT operation is completely 
+        # settled across cluster nodes before issuing a DELETE, preventing state conflicts.
         time.sleep(2)
         d_task = None
         try:
@@ -244,7 +256,7 @@ def run_vm_sanity(config_path: str = None) -> None:
 
     final_results[name] = status
 
-  # Print pure JSON output for local_processor.py to capture
+ 
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":

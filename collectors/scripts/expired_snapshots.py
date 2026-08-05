@@ -1,16 +1,22 @@
-"""Module to verify Expired Snapshots across all PCs."""
+"""Module to Track expired system-retained snapshots ENG-924183"""
 
 import json
 import os
 import sys
 import paramiko
 
-# STEP 5: Define global credentials as requested
 DEF_USER = 'nutanix'
-DEF_PWD = 'Pitadmin@1234'
+DEF_PWD = 'Nutanix.123'
 
 def parse_raw_output(raw_text: str) -> list:
-  """Parses the pipe-delimited text table into a list of dictionaries."""
+  """Parses the pipe-delimited text table into a list of dictionaries.
+
+  Args:
+    raw_text (str): The raw string output returned from the command.
+
+  Returns:
+    list: A list of dictionaries containing structured snapshot information.
+  """
   parsed_rows = []
   if not raw_text:
     return parsed_rows
@@ -35,7 +41,17 @@ def parse_raw_output(raw_text: str) -> list:
   return parsed_rows
 
 def verify_expired_snapshots(ip: str, user: str, password: str) -> tuple:
-  """Executes the snapshot utility via SSH to grab expired recovery points."""
+  """Executes the snapshot utility via SSH to grab expired recovery points.
+
+  Args:
+    ip (str): The target IP address to connect to.
+    user (str): The SSH username for authentication.
+    password (str): The SSH password for authentication.
+
+  Returns:
+    tuple: A tuple containing a summary dictionary, a list of expired snapshots, 
+           and a boolean indicating success.
+  """
   try:
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -63,9 +79,16 @@ def verify_expired_snapshots(ip: str, user: str, password: str) -> tuple:
     return summary, [], False
 
 def run_snapshot_collection(config_path=None):
-  """Reads endpoints from the config file and returns expired snapshots."""
+  """Reads endpoints from the config file and returns expired snapshots.
 
-  # STEP 6: Read config without using Django settings
+  Args:
+    config_path (str, optional): Path to the configuration JSON file.
+                                 Defaults to None (auto-resolves path).
+
+  Returns:
+    dict: A dictionary containing the collection results mapped by IP address.
+  """
+  
   if not config_path:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.dirname(os.path.dirname(script_dir))
@@ -91,7 +114,6 @@ def run_snapshot_collection(config_path=None):
 
     summary_data, expired_list, is_successful = verify_expired_snapshots(ip, user, pwd)
 
-
     results[ip] = {
       "is_successful": is_successful,
       "summary_data": summary_data,
@@ -101,7 +123,6 @@ def run_snapshot_collection(config_path=None):
   return results
 
 if __name__ == "__main__":
-  # The framework will automatically catch this printed JSON and save it to the DB!
   final_results = run_snapshot_collection()
   print(json.dumps(final_results, indent=2))
 

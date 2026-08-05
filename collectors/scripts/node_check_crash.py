@@ -13,7 +13,7 @@ import paramiko
 
 # --- Global Default Credentials ---
 DEF_USER = "nutanix"
-DEF_PWD = "Pitadmin@1234"
+DEF_PWD = "Nutanix.123"
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,7 @@ def run_crash_audit(config_path: str = None) -> None:
     if not ip:
       continue
 
-    # Credential fallback to DEF_USER and DEF_PWD
+
     creds = pe.get("credentials", {})
     user = pe.get("ssh_user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pe.get("ssh_password", creds.get("password", DEF_PWD))
@@ -121,7 +121,6 @@ def run_crash_audit(config_path: str = None) -> None:
     logger.info(f"Auditing cluster for SIGSEGV crashes: {cluster_name} ({ip})...")
     final_results[cluster_name] = audit_node_sigsegv(ip, user, pwd)
 
-  # Print pure JSON to stdout for local_processor.py to capture
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":

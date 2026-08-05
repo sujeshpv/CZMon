@@ -103,7 +103,6 @@ def run_snapshot_tracker(config_path: str = None) -> None:
     logger.info(f"Tracking snapshot usage for cluster: {cluster_name} ({ip})...")
     final_results[cluster_name] = get_recovery_point_usage(ip, user, pwd)
 
-  # Print pure JSON output for local_processor.py to capture
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":

@@ -71,3 +71,5 @@ class AhvHomeUsage(models.Model):
     return f"{self.cluster_name} - Checked: {self.last_checked}"
 
 
+
+
