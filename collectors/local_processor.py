@@ -11,6 +11,7 @@ import subprocess
 from common.logger.logger import EntryExit, setup_logger
 from common.exceptions.exceptions import CZMonError
 from common.connection.sqliteworker import Sqlite3Worker
+from collectors.api_processor import ApiProcessor
 
 LOGGER = setup_logger(__name__)
 
@@ -29,6 +30,7 @@ class LocalProcessor:
       )
       db_path = os.path.join(self.base_dir, "metrics.db")
       self.db_worker = Sqlite3Worker(db_path)
+      self.api_processor = ApiProcessor()
       self.config_path = os.path.join(
         self.base_dir, "static", "configurations", "local_cli_catalog.json"
       )
@@ -41,35 +43,12 @@ class LocalProcessor:
       raise error
 
   @EntryExit
-  def load_config(self, config_path):
-    """
-    Load configuration from JSON file.
-
-    Args:
-      config_path (str): Path to configuration JSON file.
-
-    Returns:
-      dict: Parsed configuration.
-    """
-    try:
-      with open(config_path, "r") as f:
-        return json.load(f)
-    except Exception as err:
-      error = CZMonError(
-        "Failed loading config file",
-        cause=err,
-        context={"config_path": config_path}
-      )
-      LOGGER.error(error)
-      raise error
-
-  @EntryExit
   def process_data(self):
     """
     Execute commands from catalog and persist output to DB dynamically.
     """
     try:
-      catalog = self.load_config(self.config_path)
+      catalog = self.api_processor.load_config(self.config_path)
       if not catalog:
         return
 
