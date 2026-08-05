@@ -114,7 +114,7 @@ def fetch_vm_count_per_node(
     logger.error(f"API Request Failed for {cluster_ip}: {e}")
     return {"error": f"API Request Failed: {str(e)}"}
 
-def collect_all_endpoints(config_path: str = None) -> None:
+def collect_all_vm_power_states(config_path: str = None) -> None:
   """Reads endpoints, collects data for all PE clusters, and prints JSON.
 
   Args:
@@ -174,5 +174,5 @@ if __name__ == "__main__":
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
   )
 
-  collect_all_endpoints()
+  collect_all_vm_power_states()
 
