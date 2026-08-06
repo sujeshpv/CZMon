@@ -163,7 +163,6 @@ def run_snapshot_collection(config_path: str = None) -> dict:
     if not ip:
       continue
 
-    # Prioritize UI-defined credentials, fallback to global defaults
     creds = pc.get("credentials", {})
     user = pc.get("user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pc.get("password", creds.get("password", DEF_PWD))
