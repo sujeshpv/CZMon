@@ -1,17 +1,37 @@
 {
   "check_pgw_status": {
-    "description": "Runs local python script for PGW Status (Demo)",
-    "command": [
-      "/home/nutanix/CZMon/venv/bin/python3",
-      "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"
-    ]
+    "description": "Runs local python script for PGW Status",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
   },
+
   "check_ahv_home_usage": {
     "description": "Checks /home partition available, actual and usage percentage on all AHV hosts",
-    "command": [
-      "/home/nutanix/CZMon/venv/bin/python3",
-      "/home/nutanix/CZMon/collectors/scripts/check_ahv_home_usage.py"
-    ]
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_ahv_home_usage.py"]
+  },
+
+  "expired_snapshots": {
+    "description": "Runs local python script for Expired Snapshots verification",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/expired_snapshots.py"]
+  },
+
+  "node_check_crash": {
+    "description": "Audits clusters for SIGSEGV crashes",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/node_check_crash.py"]
+  },
+
+  "node_tool": {
+    "description": "Verifies Cassandra ring consistency",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/node_tool.py"]
+  },
+
+  "vm_crud": {
+    "description": "Performs VM Create, Update, Delete sanity checks",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/vm_crud.py"]
+  },
+
+  "snapshot_usage_tracker": {
+    "description": "Tracks Recovery Point storage usage percentages",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
   }
 }
 
