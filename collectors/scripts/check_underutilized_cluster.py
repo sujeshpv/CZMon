@@ -1,13 +1,13 @@
-"""Checks Prism Gateway (PGW) heartbeat status for Nutanix clusters.
+"""Checks if a Nutanix cluster is underutilized based on Memory usage.
 
-This script connects to the Nutanix Prism API to verify PGW status.
+This script connects to the Nutanix Prism API to gather stats.
 It is designed to run independently and print pure JSON for the CZMon framework.
 """
 
-import json
-import logging
 import os
 import sys
+import json
+import logging
 import requests
 import urllib3
 
@@ -15,53 +15,67 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Configurations ---
+MEMORY_UNDERUTILIZATION_THRESHOLD_PCT = 20.0
 DEF_UNAME = "admin"
 DEF_PWD = "Nutanix.123"
 
 logger = logging.getLogger(__name__)
 
-def verify_pgw_status(
-  ip: str, username: str, password: str
+def check_cluster_utilization(
+  cluster_ip: str, username: str, password: str
 ) -> dict:
-  """Connects to Nutanix Prism Gateway API to check heartbeat status.
+  """Connects to Nutanix Prism API to get utilization stats.
 
   Args:
-    ip (str): The Prism Element or Prism Central Cluster IP / virtual IP.
-    username (str): The Username for authentication.
-    password (str): The Password for authentication.
+    cluster_ip (str): The Prism Element Cluster IP or FQDN.
+    username (str): The Prism Element Username for authentication.
+    password (str): The Prism Element Password for authentication.
 
   Returns:
-    dict: A dictionary containing online status and heartbeat data or error message.
+    dict: A dictionary containing the cluster IP, CPU, Memory, IOPS,
+          and a boolean flag indicating if the cluster is underutilized.
   """
-  url = f"https://{ip}:9440/PrismGateway/services/rest/v1/heartbeat"
+  base_url = f"https://{cluster_ip}:9440/api/nutanix/v2.0"
   auth = (username, password)
   headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
   try:
     resp = requests.get(
-      url, auth=auth, headers=headers, verify=False, timeout=15
+      f"{base_url}/cluster", auth=auth, headers=headers, verify=False, timeout=15
     )
     resp.raise_for_status()
-    heartbeat_data = resp.json()
+    cluster_data = resp.json()
+    stats = cluster_data.get("stats", {})
 
-    logger.info(f"PGW status check successful for {ip}")
+    # ppm is parts per million. Divide by 10,000 to get percentage.
+    cpu_ppm = float(stats.get("hypervisor_cpu_usage_ppm", 0))
+    mem_ppm = float(stats.get("memory_usage_ppm", 0))
+
+    cpu_pct = round(cpu_ppm / 10000.0, 2)
+    mem_pct = round(mem_ppm / 10000.0, 2)
+    iops = round(float(stats.get("controller_num_iops", 0)), 2)
+
+    is_underutilized = mem_pct < MEMORY_UNDERUTILIZATION_THRESHOLD_PCT
+    if is_underutilized:
+      logger.warning(f"ALERT: Cluster memory on {cluster_ip} low ({mem_pct}%)!")
+
     return {
-      "is_online": True,
-      "status_data": heartbeat_data
+      "cluster_ip": cluster_ip,
+      "cpu_usage_percent": cpu_pct,
+      "memory_usage_percent": mem_pct,
+      "iops": iops,
+      "is_underutilized": is_underutilized
     }
 
   except requests.exceptions.RequestException as e:
-    logger.error(f"API Request Failed for {ip}: {e}")
-    return {
-      "is_online": False,
-      "error_message": str(e)
-    }
+    logger.error(f"API Request Failed for {cluster_ip}: {e}")
+    return {"cluster_ip": cluster_ip, "error_message": str(e)}
 
-def run_pgw_collection(config_path: str = None) -> None:
-  """Reads endpoints, collects PGW status, and prints JSON.
+def run_utilization_check(config_path: str = None) -> None:
+  """Reads endpoints, collects utilization stats, and prints JSON.
 
   Args:
-    config_path (str, optional): Path to the endpoints JSON config file.
+    config_path (str, optional): Path to the endpoints JSON config file. 
                                  Defaults to None (auto-resolves path).
   """
   if not config_path:
@@ -73,7 +87,7 @@ def run_pgw_collection(config_path: str = None) -> None:
     )
 
   try:
-    with open(config_path, "r") as f:
+    with open(config_path, 'r') as f:
       config_data = json.load(f)
   except Exception as e:
     logger.error(f"Failed to load config at {config_path}: {e}")
@@ -102,8 +116,8 @@ def run_pgw_collection(config_path: str = None) -> None:
     if not ip:
       continue
 
-    logger.info(f"Checking PGW status for cluster: {ip}...")
-    final_results[ip] = verify_pgw_status(ip, user, pwd)
+    logger.info(f"Checking utilization for cluster: {ip}...")
+    final_results[ip] = check_cluster_utilization(ip, user, pwd)
 
   # Print pure JSON to stdout so local_processor.py can parse it
   print(json.dumps(final_results, indent=2))
@@ -115,5 +129,5 @@ if __name__ == "__main__":
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
   )
-  run_pgw_collection()
+  run_utilization_check()
 
