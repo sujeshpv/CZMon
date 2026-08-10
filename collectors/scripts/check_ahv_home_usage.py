@@ -349,7 +349,7 @@ def collect_all_ahv_partition_usage(config_path: Optional[str] = None) -> None:
     logger.info(f"Fetching AHV host partition usage for IP: {ip}...")
     final_results[ip] = collect_cluster_partition_usage(ip, user, pwd)
 
-  # CRITICAL: Print pure JSON to stdout so local_processor.py can parse it
+  #Output collected results in JSON format
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
