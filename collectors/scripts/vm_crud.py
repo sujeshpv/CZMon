@@ -64,7 +64,8 @@ def wait_for_task(
   ip_address: str,
   task_uuid: Optional[str],
   user: str,
-  pwd: str
+  pwd: str,
+  timeout_secs: int = 20
 ) -> bool:
   """Polls a Nutanix task until it succeeds, fails, or times out.
 
@@ -73,15 +74,18 @@ def wait_for_task(
     task_uuid (str): The UUID of the task to track.
     user (str): Username for authentication.
     pwd (str): Password for authentication.
+    timeout_secs (int, optional): Total time to wait. Defaults to 20.
 
   Returns:
-    bool: True if the task succeeded or no UUID was provided, False otherwise.
+    bool: True if task succeeded or no UUID was provided, False otherwise.
   """
   if not task_uuid:
     return True
 
-  # Poll up to 10 times with a 2-second sleep (total 20 seconds)
-  for _ in range(10):
+  # Calculate iterations based on a 2-second sleep interval
+  iterations = max(1, int(timeout_secs / 2))
+
+  for _ in range(iterations):
     try:
       data = make_api_call(
         ip_address,
@@ -98,7 +102,8 @@ def wait_for_task(
     except Exception as e:
       logger.debug(f"Error polling task {task_uuid}: {e}")
 
-    # Mandatory hard sleep: We must pause between checks to prevent flooding the Prism Central API with hundreds of requests in a tight loop.
+    # Mandatory hard sleep: We must pause between checks to prevent 
+    # flooding the Prism Central API with hundreds of requests in a tight loop.
     time.sleep(2)
 
   return True
@@ -146,7 +151,9 @@ def run_vm_sanity(config_path: str = None) -> None:
     vm_uuid = None
     task_uuid = None
 
-    logger.info(f"Starting VM CRUD sanity check for cluster: {name} ({ip_addr})...")
+    logger.info(
+      f"Starting VM CRUD sanity check for cluster: {name} ({ip_addr})..."
+    )
 
     try:
       # --- 1. CREATE VM ---
@@ -190,7 +197,8 @@ def run_vm_sanity(config_path: str = None) -> None:
 
         # Mandatory hard sleep: Even after a task reports 'SUCCEEDED', 
         # backend needs a moment to fully synchronize the new entity.
-        # Without this delay, the subsequent GET request might return a 404 Not Found error.
+        # Without this delay, the subsequent GET request might return a 
+        # 404 Not Found error.
         time.sleep(2)
 
       # --- 2. UPDATE VM ---
@@ -229,8 +237,9 @@ def run_vm_sanity(config_path: str = None) -> None:
 
       # --- 3. DELETE VM ---
       if vm_uuid:
-        # Mandatory hard sleep: Ensures the previous PUT operation is completely 
-        # settled across cluster nodes before issuing a DELETE, preventing state conflicts.
+        # Mandatory hard sleep: Ensures the previous PUT operation is 
+        # completely settled across cluster nodes before issuing a 
+        # DELETE, preventing state conflicts.
         time.sleep(2)
         d_task = None
         try:
@@ -254,7 +263,6 @@ def run_vm_sanity(config_path: str = None) -> None:
 
     final_results[name] = status
 
- 
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
