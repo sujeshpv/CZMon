@@ -7,7 +7,7 @@ import re
 import sys
 import time
 import uuid
-from typing import Optional
+from typing import Optional, Tuple
 import requests
 import urllib3
 
@@ -19,7 +19,7 @@ DEF_USER = "admin"
 DEF_PWD = "Nutanix.123"
 
 # Prefix for test VMs so anyone can easily track/change them
-VM_NAME_PREFIX = "sanity-"  
+VM_NAME_PREFIX = "sanity-"
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,6 @@ def wait_for_task(
   if not task_uuid:
     return True
 
-  # Calculate iterations based on a 2-second sleep interval
   iterations = max(1, int(timeout_secs / 2))
 
   for _ in range(iterations):
@@ -102,11 +101,172 @@ def wait_for_task(
     except Exception as e:
       logger.debug(f"Error polling task {task_uuid}: {e}")
 
-    # Mandatory hard sleep: We must pause between checks to prevent 
-    # flooding the Prism Central API with hundreds of requests in a tight loop.
+    # Polling interval
     time.sleep(2)
 
   return True
+
+def wait_for_entity(
+  ip: str,
+  vm_uuid: str,
+  user: str,
+  pwd: str,
+  expected_state: str = "AVAILABLE",
+  timeout_secs: int = 20
+) -> bool:
+  """Polls the VM API endpoint until it reaches the expected state.
+
+  Args:
+    ip (str): Cluster IP address.
+    vm_uuid (str): The UUID of the VM to track.
+    user (str): Username for authentication.
+    pwd (str): Password for authentication.
+    expected_state (str): 'AVAILABLE' for 200 OK, 'DELETED' for 404 Not Found.
+    timeout_secs (int): Total seconds to wait. Defaults to 20.
+
+  Returns:
+    bool: True if the expected state is reached, False otherwise.
+  """
+  iterations = max(1, int(timeout_secs / 2))
+
+  for _ in range(iterations):
+    try:
+      make_api_call(
+        ip, "GET", f"/api/nutanix/v3/vms/{vm_uuid}", user=user, pwd=pwd
+      )
+      # If no exception is raised, the entity is available (200 OK)
+      if expected_state == "AVAILABLE":
+        return True
+    except requests.exceptions.HTTPError as e:
+      # If we get a 404, the entity is not found or has been fully deleted
+      if expected_state == "DELETED" and e.response.status_code == 404:
+        return True
+    except Exception:
+      pass
+
+    # Polling interval
+    time.sleep(2)
+
+  return False
+
+def create_vm(ip: str, user: str, pwd: str) -> Tuple[Optional[str], bool]:
+  """Creates a test VM and waits for it to become available in the API.
+
+  Args:
+    ip (str): Cluster IP address.
+    user (str): API username.
+    pwd (str): API password.
+
+  Returns:
+    tuple: (vm_uuid (str or None), success (bool)).
+  """
+  vm_name = f"{VM_NAME_PREFIX}{uuid.uuid4().hex[:4]}"
+  payload = {
+    "spec": {
+      "name": vm_name,
+      "resources": {
+        "num_sockets": 1,
+        "num_vcpus_per_socket": 1,
+        "memory_size_mib": 1024,
+      },
+    },
+    "metadata": {"kind": "vm"},
+  }
+
+  vm_uuid = None
+  task_uuid = None
+
+  try:
+    data = make_api_call(ip, "POST", "/api/nutanix/v3/vms", payload, user, pwd)
+    vm_uuid = data.get("metadata", {}).get("uuid")
+    task_uuid = data.get("status", {}).get("execution_context", {}).get("task_uuid")
+  except Exception as e:
+    msg = str(e)
+    u_match = re.search(r'"uuid":\s*"([^"]+)"', msg)
+    t_match = re.search(r'"task_uuid":\s*"([^"]+)"', msg)
+    if u_match:
+      vm_uuid = u_match.group(1)
+    if t_match:
+      task_uuid = t_match.group(1)
+
+  if vm_uuid:
+    task_ok = wait_for_task(ip, task_uuid, user, pwd)
+    if task_ok:
+      # Dynamically wait for the 404 to clear
+      is_avail = wait_for_entity(ip, vm_uuid, user, pwd, "AVAILABLE")
+      return vm_uuid, is_avail
+
+  return vm_uuid, False
+
+def update_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
+  """Updates the memory of the test VM and waits for completion.
+
+  Args:
+    ip (str): Cluster IP address.
+    vm_uuid (str): The UUID of the VM to update.
+    user (str): API username.
+    pwd (str): API password.
+
+  Returns:
+    bool: True if the update succeeded and settled, False otherwise.
+  """
+  try:
+    current = make_api_call(
+      ip, "GET", f"/api/nutanix/v3/vms/{vm_uuid}", user=user, pwd=pwd
+    )
+
+    update_payload = {
+      "spec": current["spec"],
+      "metadata": current["metadata"],
+    }
+    update_payload["spec"]["resources"]["memory_size_mib"] = 2048
+
+    u_data = make_api_call(
+      ip, "PUT", f"/api/nutanix/v3/vms/{vm_uuid}", update_payload, user, pwd
+    )
+    u_task = u_data.get("status", {}).get("execution_context", {}).get("task_uuid")
+
+    if wait_for_task(ip, u_task, user, pwd):
+      # Wait for the API to confirm the entity is settled
+      return wait_for_entity(ip, vm_uuid, user, pwd, "AVAILABLE")
+    return False
+
+  except Exception as e:
+    t_match = re.search(r'"task_uuid":\s*"([^"]+)"', str(e))
+    if t_match:
+      if wait_for_task(ip, t_match.group(1), user, pwd):
+        return wait_for_entity(ip, vm_uuid, user, pwd, "AVAILABLE")
+    return False
+
+def delete_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
+  """Deletes the test VM and polls until the API returns 404 Not Found.
+
+  Args:
+    ip (str): Cluster IP address.
+    vm_uuid (str): The UUID of the VM to delete.
+    user (str): API username.
+    pwd (str): API password.
+
+  Returns:
+    bool: True if deletion succeeded, False otherwise.
+  """
+  try:
+    d_data = make_api_call(
+      ip, "DELETE", f"/api/nutanix/v3/vms/{vm_uuid}", user=user, pwd=pwd
+    )
+    d_task = d_data.get("status", {}).get("execution_context", {}).get("task_uuid")
+
+    if wait_for_task(ip, d_task, user, pwd):
+      # Poll until the API throws a 404 Not Found
+      return wait_for_entity(ip, vm_uuid, user, pwd, "DELETED")
+    return False
+
+  except Exception as e:
+    t_match = re.search(r'"task_uuid":\s*"([^"]+)"', str(e))
+    if t_match:
+      if wait_for_task(ip, t_match.group(1), user, pwd):
+        return wait_for_entity(ip, vm_uuid, user, pwd, "DELETED")
+    return False
 
 def run_vm_sanity(config_path: str = None) -> None:
   """Reads endpoints config, executes VM CRUD sanity check, and prints JSON.
@@ -148,115 +308,20 @@ def run_vm_sanity(config_path: str = None) -> None:
       "vm_update_result": False,
       "vm_delete_result": False,
     }
-    vm_uuid = None
-    task_uuid = None
 
     logger.info(
       f"Starting VM CRUD sanity check for cluster: {name} ({ip_addr})..."
     )
 
     try:
-      # --- 1. CREATE VM ---
-      # Used the globally defined prefix so it can be easily tracked or changed
-      vm_name = f"{VM_NAME_PREFIX}{uuid.uuid4().hex[:4]}"
-      payload = {
-        "spec": {
-          "name": vm_name,
-          "resources": {
-            "num_sockets": 1,
-            "num_vcpus_per_socket": 1,
-            "memory_size_mib": 1024,
-          },
-        },
-        "metadata": {"kind": "vm"},
-      }
+      vm_uuid, create_ok = create_vm(ip_addr, user, pwd)
+      status["vm_create_result"] = create_ok
 
-      try:
-        data = make_api_call(
-          ip_addr,
-          "POST",
-          "/api/nutanix/v3/vms",
-          payload,
-          user=user,
-          pwd=pwd
-        )
-        vm_uuid = data["metadata"]["uuid"]
-        task_uuid = data["status"]["execution_context"]["task_uuid"]
-      except Exception as e:
-        msg = str(e)
-        u_match = re.search(r'"uuid":\s*"([^"]+)"', msg)
-        t_match = re.search(r'"task_uuid":\s*"([^"]+)"', msg)
-        if u_match:
-          vm_uuid = u_match.group(1)
-        if t_match:
-          task_uuid = t_match.group(1)
+      if vm_uuid and create_ok:
+        status["vm_update_result"] = update_vm(ip_addr, vm_uuid, user, pwd)
 
       if vm_uuid:
-        wait_for_task(ip_addr, task_uuid, user, pwd)
-        status["vm_create_result"] = True
-
-        # Mandatory hard sleep: Even after a task reports 'SUCCEEDED', 
-        # backend needs a moment to fully synchronize the new entity.
-        # Without this delay, the subsequent GET request might return a 
-        # 404 Not Found error.
-        time.sleep(2)
-
-      # --- 2. UPDATE VM ---
-      if vm_uuid and status["vm_create_result"]:
-        current = make_api_call(
-          ip_addr,
-          "GET",
-          f"/api/nutanix/v3/vms/{vm_uuid}",
-          user=user,
-          pwd=pwd
-        )
-
-        update_payload = {
-          "spec": current["spec"],
-          "metadata": current["metadata"],
-        }
-        update_payload["spec"]["resources"]["memory_size_mib"] = 2048
-
-        u_task = None
-        try:
-          u_data = make_api_call(
-            ip_addr,
-            "PUT",
-            f"/api/nutanix/v3/vms/{vm_uuid}",
-            update_payload,
-            user=user,
-            pwd=pwd
-          )
-          u_task = u_data["status"]["execution_context"]["task_uuid"]
-        except Exception as e:
-          t_match = re.search(r'"task_uuid":\s*"([^"]+)"', str(e))
-          u_task = t_match.group(1) if t_match else None
-
-        if wait_for_task(ip_addr, u_task, user, pwd):
-          status["vm_update_result"] = True
-
-      # --- 3. DELETE VM ---
-      if vm_uuid:
-        # Mandatory hard sleep: Ensures the previous PUT operation is 
-        # completely settled across cluster nodes before issuing a 
-        # DELETE, preventing state conflicts.
-        time.sleep(2)
-        d_task = None
-        try:
-          d_data = make_api_call(
-            ip_addr,
-            "DELETE",
-            f"/api/nutanix/v3/vms/{vm_uuid}",
-            user=user,
-            pwd=pwd
-          )
-          d_task = d_data["status"]["execution_context"]["task_uuid"]
-        except Exception as e:
-          t_match = re.search(r'"task_uuid":\s*"([^"]+)"', str(e))
-          d_task = t_match.group(1) if t_match else None
-
-        if wait_for_task(ip_addr, d_task, user, pwd):
-          status["vm_delete_result"] = True
+        status["vm_delete_result"] = delete_vm(ip_addr, vm_uuid, user, pwd)
 
     except Exception as e:
       logger.error(f"Sanity Error on {name}: {e}")
