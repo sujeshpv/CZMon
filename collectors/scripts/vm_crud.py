@@ -3,7 +3,6 @@
 import json
 import logging
 import os
-import re
 import sys
 import time
 import uuid
@@ -20,6 +19,9 @@ DEF_PWD = "Nutanix.123"
 
 # Prefix for test VMs so anyone can easily track/change them
 VM_NAME_PREFIX = "sanity-"
+
+# Interval in seconds between API polling requests
+POLL_INTERVAL_SECS = 2
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ def wait_for_task(
   if not task_uuid:
     return True
 
-  iterations = max(1, int(timeout_secs / 2))
+  iterations = max(1, int(timeout_secs / POLL_INTERVAL_SECS))
 
   for _ in range(iterations):
     try:
@@ -102,9 +104,10 @@ def wait_for_task(
       logger.debug(f"Error polling task {task_uuid}: {e}")
 
     # Polling interval
-    time.sleep(2)
+    time.sleep(POLL_INTERVAL_SECS)
 
-  return True
+  logger.error(f"Task {task_uuid} timed out after {timeout_secs} seconds.")
+  return False
 
 def wait_for_entity(
   ip: str,
@@ -127,7 +130,7 @@ def wait_for_entity(
   Returns:
     bool: True if the expected state is reached, False otherwise.
   """
-  iterations = max(1, int(timeout_secs / 2))
+  iterations = max(1, int(timeout_secs / POLL_INTERVAL_SECS))
 
   for _ in range(iterations):
     try:
@@ -141,12 +144,17 @@ def wait_for_entity(
       # If we get a 404, the entity is not found or has been fully deleted
       if expected_state == "DELETED" and e.response.status_code == 404:
         return True
-    except Exception:
-      pass
+      else:
+        # Log unexpected HTTP errors 
+        logger.error(f"HTTPError checking entity {vm_uuid}: {e}")
+    except Exception as e:
+      # Log any other unexpected exception
+      logger.error(f"Error checking entity {vm_uuid}: {e}")
 
     # Polling interval
-    time.sleep(2)
+    time.sleep(POLL_INTERVAL_SECS)
 
+  logger.error(f"Entity {vm_uuid} state check timed out.")
   return False
 
 def create_vm(ip: str, user: str, pwd: str) -> Tuple[Optional[str], bool]:
@@ -173,23 +181,15 @@ def create_vm(ip: str, user: str, pwd: str) -> Tuple[Optional[str], bool]:
     "metadata": {"kind": "vm"},
   }
 
-  vm_uuid = None
-  task_uuid = None
-
   try:
     data = make_api_call(ip, "POST", "/api/nutanix/v3/vms", payload, user, pwd)
     vm_uuid = data.get("metadata", {}).get("uuid")
     task_uuid = data.get("status", {}).get("execution_context", {}).get("task_uuid")
   except Exception as e:
-    msg = str(e)
-    u_match = re.search(r'"uuid":\s*"([^"]+)"', msg)
-    t_match = re.search(r'"task_uuid":\s*"([^"]+)"', msg)
-    if u_match:
-      vm_uuid = u_match.group(1)
-    if t_match:
-      task_uuid = t_match.group(1)
+    logger.error(f"API call failed during VM creation on {ip}: {e}")
+    return None, False
 
-  if vm_uuid:
+  if vm_uuid and task_uuid:
     task_ok = wait_for_task(ip, task_uuid, user, pwd)
     if task_ok:
       # Dynamically wait for the 404 to clear
@@ -232,10 +232,7 @@ def update_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
     return False
 
   except Exception as e:
-    t_match = re.search(r'"task_uuid":\s*"([^"]+)"', str(e))
-    if t_match:
-      if wait_for_task(ip, t_match.group(1), user, pwd):
-        return wait_for_entity(ip, vm_uuid, user, pwd, "AVAILABLE")
+    logger.error(f"API call failed during VM update on {ip}: {e}")
     return False
 
 def delete_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
@@ -262,10 +259,7 @@ def delete_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
     return False
 
   except Exception as e:
-    t_match = re.search(r'"task_uuid":\s*"([^"]+)"', str(e))
-    if t_match:
-      if wait_for_task(ip, t_match.group(1), user, pwd):
-        return wait_for_entity(ip, vm_uuid, user, pwd, "DELETED")
+    logger.error(f"API call failed during VM deletion on {ip}: {e}")
     return False
 
 def run_vm_sanity(config_path: str = None) -> None:
