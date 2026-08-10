@@ -12,9 +12,6 @@ import ipaddress
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-# Import the new health check models
-from .models import PrismGatewayStatus, VMPowerStates, TaskMonitor, AHVHomeUsage, UnderutilizedCluster
-
 # Create your views here.
 _IPV4_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
 
@@ -38,7 +35,6 @@ def _extract_ipv4(value):
 def home(request):
     return render(request, "home1.html")
 
-
 def get_endpoints():
     """Load and normalize endpoints from static/configurations/endpoints.json."""
     endpoints_path = os.path.join(dj_settings.BASE_DIR, STATIC, CONFIGURATIONS, ENDPOINTS_JSON)
@@ -50,6 +46,50 @@ def get_endpoints():
     except Exception:
         return {"pcs": [], "pes": []}
 
+    # Support AZ-based schema:
+    # {
+    #   "AZ1": [{"type":"PC", ...}, {"type":"PE", ...}]
+    # }
+    if isinstance(data, dict) and "pcs" not in data and "pes" not in data:
+        pcs_from_az = []
+        pes_from_az = []
+        for az_key, entries in data.items():
+            if not isinstance(entries, list):
+                continue
+            az_pcs = []
+            az_pes = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                entry_type = str(entry.get("type") or "").strip().upper()
+                normalized = {
+                    "name": entry.get("name", ""),
+                    "ip": entry.get("ip") or entry.get("virtual_ip") or "",
+                    "user": entry.get("user", ""),
+                    "password": entry.get("password", ""),
+                    "az": az_key,
+                }
+                if entry_type == "PC":
+                    az_pcs.append(dict(normalized))
+                elif entry_type == "PE":
+                    az_pes.append(dict(normalized))
+
+            for pc in az_pcs:
+                pc["pes"] = [dict(pe) for pe in az_pes]
+                pcs_from_az.append(pc)
+
+            for pe in az_pes:
+                if az_pcs:
+                    pe["pc_name"] = az_pcs[0].get("name", "")
+                    pe["pc_ip"] = az_pcs[0].get("ip", "")
+                pes_from_az.append(pe)
+
+        data = {"pcs": pcs_from_az, "pes": pes_from_az}
+
+    # Support AZ-based schema:
+    # {
+    #   "AZ1": [{"type":"PC", ...}, {"type":"PE", ...}]
+    # }
     if isinstance(data, dict) and "pcs" not in data and "pes" not in data:
         pcs_from_az = []
         pes_from_az = []
@@ -144,7 +184,6 @@ def get_endpoints():
     pes = normalized_pes
 
     return {"pcs": pcs, "pes": pes}
-
 
 def _build_overview_context():
     """Build the template context shared by the Dashboard and Cluster Metrics pages.
@@ -248,6 +287,8 @@ def _build_overview_context():
                 if pe_display not in pc_to_pes[target_pc]:
                     pc_to_pes[target_pc].append(pe_display)
 
+        # Fallback: if PEs are configured globally (no pc_name/pc_ip mapping),
+        # show all configured PEs for selected PC.
         for pc in endpoint_data.get("pcs", []):
             key = pc_key(pc)
             ip = (pc.get("ip") or "").strip()
@@ -331,29 +372,11 @@ def _build_overview_context():
     }
     return ctx
 
-
 def dashboard(request):
-    # 1. Fetch the shared overview context (AZs, PCs, PEs, clusters, etc.)
-    ctx = _build_overview_context()
-    
-    # 2. Fetch the latest metric snapshots from the 5 health check scripts
-    # We limit to the most recent 5 runs for each check to keep loading efficient
-    try:
-        ctx['pgw_metrics'] = PrismGatewayStatus.objects.all().order_by('-created_at')[:5]
-        ctx['vm_states'] = VMPowerStates.objects.all().order_by('-created_at')[:5]
-        ctx['task_status'] = TaskMonitor.objects.all().order_by('-created_at')[:5]
-        ctx['ahv_usage'] = AHVHomeUsage.objects.all().order_by('-created_at')[:5]
-        ctx['underutilized'] = UnderutilizedCluster.objects.all().order_by('-created_at')[:5]
-    except Exception as err:
-        ctx['metrics_error'] = f"Failed loading health check metrics: {err}"
-
-    # 3. Render your dashboard.html with the combined context
-    return render(request, "dashboard.html", ctx)
-
+    return render(request, "dashboard.html", _build_overview_context())
 
 def cluster_metrics_view(request):
     return render(request, "cluster_metrics.html", _build_overview_context())
-
 
 def _resolve_time_range(range_key: str):
     now = datetime.now(timezone.utc)
@@ -375,7 +398,6 @@ def _resolve_time_range(range_key: str):
     end = now.isoformat()
     return start, end
 
-
 def _split_host_blocks(raw_output):
     blocks = []
     current_host = "unknown"
@@ -395,7 +417,6 @@ def _split_host_blocks(raw_output):
     if current_lines:
         blocks.append({"host": current_host, "lines": current_lines})
     return blocks
-
 
 def _parse_df_rows_from_blocks(blocks):
     parsed_rows = []
@@ -434,8 +455,10 @@ def _parse_df_rows_from_blocks(blocks):
             )
     return parsed_rows
 
-
 def pe_partition_series_api(request):
+    """
+    Return PE partition usage time-series within selected time range.
+    """
     cluster = (request.GET.get("cluster") or "").strip()
     entity = (request.GET.get("entity") or "").strip()
     node = (request.GET.get("node") or "").strip()
@@ -471,6 +494,8 @@ def pe_partition_series_api(request):
                 params.append(cluster)
             entity_ip = _extract_ipv4(entity)
             if entity_ip:
+                # Restrict to rows collected from this PE so we don't pull
+                # 2000 rows from unrelated clusters and then post-filter.
                 where.append("ip = ?")
                 params.append(entity_ip)
             if start:
@@ -482,7 +507,7 @@ def pe_partition_series_api(request):
 
             query = f"""
                 SELECT created_at, ip, output_json, output
-FROM cluster_version
+                FROM cluster_version
                 WHERE {' AND '.join(where)}
                 ORDER BY created_at ASC
                 LIMIT 2000
@@ -562,8 +587,18 @@ FROM cluster_version
         }
     )
 
-
 def partition_nodes_api(request):
+    """
+    Return distinct node IPs seen in df -h blocks for selected time range.
+
+    Filters
+    -------
+    - cluster : optional cluster_name (legacy)
+    - entity  : PE external IP (matches the value emitted by the entity
+                dropdown). When provided, restricts the SQL to rows that
+                were collected from this PE only - otherwise we'd return
+                SVMs from every cluster in the DB.
+    """
     cluster = (request.GET.get("cluster") or "").strip()
     entity = (request.GET.get("entity") or "").strip()
     start = (request.GET.get("start") or "").strip()
@@ -653,8 +688,10 @@ def partition_nodes_api(request):
 
     return JsonResponse({"nodes": sorted(hosts), "range_fallback_used": range_fallback_used})
 
-
 def cluster_metrics_options_api(request):
+    """
+    Return available cluster names for cluster-centric metrics view.
+    """
     db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
     if not os.path.exists(db_path):
         return JsonResponse({"clusters": []})
@@ -699,8 +736,10 @@ def cluster_metrics_options_api(request):
 
     return JsonResponse({"clusters": sorted(clusters)})
 
-
 def cluster_metrics_summary_api(request):
+    """
+    Return partition summary for selected entity + time range.
+    """
     cluster = (request.GET.get("cluster") or "").strip()
     entity = (request.GET.get("entity") or "").strip()
 
@@ -803,6 +842,7 @@ def cluster_metrics_summary_api(request):
                     values.append(float(match))
                 except Exception:
                     continue
+        # Support standalone scalar lines like "27.33TB" or "65%".
         for match in re.findall(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(%|[kKmMgGtTpP][bB])\s*$", text, flags=re.IGNORECASE | re.MULTILINE):
             try:
                 values.append(float(match[0]))
@@ -823,6 +863,7 @@ def cluster_metrics_summary_api(request):
                 line = str(raw_line or "").strip()
                 if not line:
                     continue
+                # Accept only explicit unit values (e.g. 27.33TB, 65.1%).
                 match = re.search(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(%|[kKmMgGtTpP][bB])\s*$", line)
                 if not match:
                     continue
@@ -878,6 +919,7 @@ def cluster_metrics_summary_api(request):
                 if rows:
                     data_source = "cli_timeseries"
 
+            # fallback from cluster_version.output_json if timeseries empty
             if not rows and "cluster_version" in tables:
                 cols = {
                     row[1]
@@ -940,6 +982,7 @@ def cluster_metrics_summary_api(request):
                     if rows:
                         data_source = "cluster_version.output_json"
 
+            # If no rows matched entity, fallback to cluster+time aggregate view.
             if not rows and entity:
                 if "cli_timeseries" in tables:
                     where = []
@@ -996,6 +1039,9 @@ def cluster_metrics_summary_api(request):
                     }
                     continue
 
+                # Prefer newer timestamps. For same timestamp snapshots (e.g. df -h),
+                # keep the larger value for the same metric so 0% bootstrap rows
+                # do not override meaningful partition utilization.
                 if created_at > existing["ts"] or (
                     created_at == existing["ts"] and numeric_value > float(existing["value"])
                 ):
@@ -1006,6 +1052,8 @@ def cluster_metrics_summary_api(request):
                         "dimension": dimension_value,
                     }
 
+            # Direct fallback: read persisted `df -h` raw output from DB and extract Use%.
+            # This path guarantees partition metric from cluster_version even if generic parsing misses.
             if "cluster_version" in tables:
                 where = ["command = ?"]
                 params = ["df -h"]
@@ -1031,6 +1079,7 @@ def cluster_metrics_summary_api(request):
                         continue
                     entity_rows = [r for r in df_rows if entity and str(r.get("host") or "") == entity]
                     applicable_rows = entity_rows if entity_rows else df_rows
+                    # Root partition only
                     root_rows = [
                         r for r in applicable_rows
                         if (r.get("mount") or "").strip() == "/" and isinstance(r.get("use_pct"), (int, float))
@@ -1038,6 +1087,7 @@ def cluster_metrics_summary_api(request):
                     use_values = [r.get("use_pct") for r in root_rows]
                     if not use_values:
                         continue
+                    # one root row per host snapshot, keep max as safe tie-break
                     max_use = max(use_values)
                     if "use_pct" not in latest_by_metric or created_at > latest_by_metric["use_pct"]["ts"]:
                         latest_by_metric["use_pct"] = {
@@ -1068,6 +1118,7 @@ def cluster_metrics_summary_api(request):
         "partition_space": None,
         "cpu_usage": None,
     }
+    # Partition space should reflect root mount '/' only.
     root_partition_value = None
     root_partition_ts = ""
     dedup_partition_candidates = []
@@ -1089,6 +1140,7 @@ def cluster_metrics_summary_api(request):
         root_partition_value = chosen.get("value")
         root_partition_ts = chosen.get("ts") or ""
 
+    # Strong fallback: read persisted df -h output directly and pick root '/' usage.
     if root_partition_value is None:
         try:
             with sqlite3.connect(db_path) as conn:
@@ -1179,13 +1231,13 @@ def cluster_metrics_summary_api(request):
         }
     )
 
-
 def settings_view(request):
     endpoints_path = os.path.join(dj_settings.BASE_DIR, "static", "configurations", "endpoints.json")
 
     def save_endpoints(data):
         dirpath = os.path.dirname(endpoints_path)
         os.makedirs(dirpath, exist_ok=True)
+        # write atomically: write to temp file then replace
         tmp_path = endpoints_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2)
@@ -1197,14 +1249,17 @@ def settings_view(request):
         if not value:
             return False
         value = value.strip()
+        # try IP address first
         try:
             ipaddress.ip_address(value)
             return True
         except Exception:
             pass
 
+        # validate FQDN/hostname (simple)
         if len(value) > 255:
             return False
+        # labels: alnum + hyphen, not start/end with hyphen
         fqdn_re = re.compile(r"^(?=.{1,255}$)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.?$")
         return bool(fqdn_re.match(value))
 
@@ -1214,6 +1269,7 @@ def settings_view(request):
 
     if request.method == "POST":
         data = get_endpoints()
+        # Add PC
         if "add_pc" in request.POST:
             pc_name = request.POST.get("pc_name", "").strip()
             pc_ip = request.POST.get("pc_ip", "").strip()
@@ -1236,6 +1292,7 @@ def settings_view(request):
             save_endpoints(data)
             return redirect_with_msg("settings", f"PC added: {pc_name} ({pc_ip})", "success")
 
+        # Add PE
         if "add_pe" in request.POST:
             pe_ip = request.POST.get("pe_ip", "").strip()
             pe_name = request.POST.get("pe_name", "").strip()
@@ -1246,6 +1303,7 @@ def settings_view(request):
             if not pe_name:
                 return redirect_with_msg("settings", "PE Name is required", "error")
 
+            # check duplicates by ip and name
             pes_list = data.get("pes", [])
             existing_ips = [ (p.get("ip") if isinstance(p, dict) else p) for p in pes_list ]
             existing_names = [ p.get("name", "") for p in pes_list if isinstance(p, dict) ]
@@ -1254,11 +1312,13 @@ def settings_view(request):
             if pe_name in existing_names:
                 return redirect_with_msg("settings", f"PE Name already exists: {pe_name}", "info")
 
+            # store as dict with name and ip
             data.setdefault("pes", []).append({"name": pe_name, "ip": pe_ip})
             save_endpoints(data)
             disp = f"{pe_name} ({pe_ip})"
             return redirect_with_msg("settings", f"PE added: {disp}", "success")
 
+        # Delete PC
         if "delete_pc" in request.POST:
             ip = request.POST.get("ip", "").strip()
             if ip:
@@ -1270,6 +1330,7 @@ def settings_view(request):
                     return redirect_with_msg("settings", f"PC removed: {ip}", "success")
             return redirect_with_msg("settings", f"PC not found: {ip}", "error")
 
+        # Delete PE
         if "delete_pe" in request.POST:
             ip = request.POST.get("ip", "").strip()
             if ip:
@@ -1293,7 +1354,9 @@ def settings_view(request):
                     return redirect_with_msg("settings", f"PE removed: {ip}", "success")
             return redirect_with_msg("settings", f"PE not found: {ip}", "error")
 
+    # load endpoints for display
     data = get_endpoints()
+    # read optional message from querystring (used instead of Django messages)
     msg = request.GET.get("msg")
     level = request.GET.get("level", "info")
     ctx = {
@@ -1305,77 +1368,79 @@ def settings_view(request):
     return render(request, "settings.html", ctx)
 
 def stats_view(request):
-    # Reuses your existing function to populate AZ, Setup, and PE dropdowns!
-    ctx = _build_overview_context()
-    return render(request, "stats.html", ctx)
+  """Renders the Stats page using the dynamic metric UI catalog."""
+  ctx = _build_overview_context()
 
-def stats_view(request):
-    ctx = _build_overview_context()
+  # Load the registry from the static folder
+  registry_path = os.path.join(
+    dj_settings.BASE_DIR, 'static', 'configurations', 'metric_ui_catalog.json'
+  )
+  try:
+    with open(registry_path, 'r') as f:
+      ctx['stats_registry'] = json.load(f)
+  except Exception as e:
+    # Fallback if file is missing or has a typo
+    ctx['stats_registry'] = {}
+    ctx['registry_error'] = str(e)
 
-    # Load the registry from the static folder
-    registry_path = os.path.join(dj_settings.BASE_DIR, 'static', 'configurations', 'stats_registry.json')
-    try:
-        with open(registry_path, 'r') as f:
-            ctx['stats_registry'] = json.load(f)
-    except Exception as e:
-        # Fallback if file is missing or has a typo
-        ctx['stats_registry'] = {}
-        ctx['registry_error'] = str(e)
-
-    return render(request, "stats.html", ctx)
+  return render(request, "stats.html", ctx)
 
 def stats_data_api(request):
-    """API to fetch historical data with dynamic time-range filtering."""
-    metric = request.GET.get("metric", "")
-    range_key = request.GET.get("range", "90d")
-    db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
+  """API to fetch historical data with dynamic time-range filtering."""
+  metric = request.GET.get("metric", "")
+  range_key = request.GET.get("range", "90d")
+  db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
 
-    if not os.path.exists(db_path) or not metric:
+  if not os.path.exists(db_path) or not metric:
+    return JsonResponse({"series": []})
+
+  # Map UI ranges to SQLite-compatible time modifiers
+  time_map = {
+    "1h": "-1 hour",
+    "6h": "-6 hours",
+    "24h": "-24 hours",
+    "7d": "-7 days",
+    "30d": "-30 days",
+    "90d": "-90 days"
+  }
+  time_modifier = time_map.get(range_key, "-90 days")
+
+  data_points = []
+  try:
+    with sqlite3.connect(db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      cursor = conn.cursor()
+
+      # Check if the specific script table exists
+      cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metric,)
+      )
+      if not cursor.fetchone():
         return JsonResponse({"series": []})
 
-    # Map UI ranges to SQLite-compatible time modifiers
-    time_map = {
-        "1h": "-1 hour",
-        "6h": "-6 hours",
-        "24h": "-24 hours",
-        "7d": "-7 days",
-        "30d": "-30 days",
-        "90d": "-90 days"
-    }
-    time_modifier = time_map.get(range_key, "-90 days")
+      # Generic query for any table generated by the local_processor
+      query = f"""
+        SELECT * FROM {metric}
+        WHERE created_at >= datetime('now', ?)
+        ORDER BY created_at DESC
+        LIMIT 100
+      """
+      rows = cursor.execute(query, [time_modifier]).fetchall()
 
-    data_points = []
-    try:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+      for row in rows:
+        row_dict = dict(row)
+        ip = row_dict.get("ip_address", "Unknown")
+        # Support both local_processor schema formats
+        raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
+        try:
+          payload = json.loads(raw_data)
+        except Exception:
+          payload = {"raw": raw_data}
 
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metric,))
-            if not cursor.fetchone():
-                return JsonResponse({"series": []})
+        timestamp = row_dict.get("created_at", "Latest")
+        data_points.append({"timestamp": timestamp, "ip": ip, "data": payload})
 
-            # Filter by the dynamic time range using SQLite's datetime('now')
-            query = f"""
-                SELECT * FROM {metric}
-                WHERE created_at >= datetime('now', ?)
-                ORDER BY created_at DESC
-                LIMIT 100
-            """
-            rows = cursor.execute(query, [time_modifier]).fetchall()
+  except Exception as e:
+    return JsonResponse({"error": str(e)}, status=500)
 
-            for row in rows:
-                row_dict = dict(row)
-                ip = row_dict.get("ip_address", "Unknown")
-                raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
-                try:
-                    payload = json.loads(raw_data)
-                except Exception:
-                    payload = {"raw": raw_data}
-
-                timestamp = row_dict.get("created_at", "Latest")
-                data_points.append({"timestamp": timestamp, "ip": ip, "data": payload})
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"series": data_points[::-1]})
+  return JsonResponse({"series": data_points[::-1]})
