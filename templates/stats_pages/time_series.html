@@ -1,0 +1,252 @@
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  .stats-filter-row { display: flex; gap: 28px; align-items: end; flex-wrap: wrap; }
+  .stats-filter-row .filter-select { min-width: 190px; }
+  .chart-title { color: #444; font-size: 18px; font-weight: 700; margin-bottom: 24px; text-align: center; }
+  .chart-frame { height: 350px; position: relative; }
+  .time-options { border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: center; margin-top: 18px; padding-top: 10px; }
+  .time-btn { background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 9px 18px; }
+  .time-btn.active { background: #1769b0; border-color: #1769b0; color: #fff; }
+  .data-table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  .data-table th { border-bottom: 2px solid #eee; color: #14589b; padding: 12px; text-align: left; }
+  .data-table td { border-bottom: 1px solid #eee; font-size: 13px; padding: 12px; vertical-align: top; }
+  .stats-status { color: #66717d; padding: 18px 12px; text-align: center; }
+  .stats-status.error { color: #9d1c1c; }
+</style>
+
+<section class="stats-panel stats-filter-row">
+  <label class="filter-item" for="azFilter">
+    <span class="filter-label">AZ</span>
+    <select class="filter-select" id="azFilter">
+      <option value="">Select AZ</option>
+      {% for az in azs %}<option value="{{ az }}">{{ az }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="filter-item" for="setupFilter">
+    <span class="filter-label">Setup</span>
+    <select class="filter-select" id="setupFilter" disabled>
+      <option value="">Select Setup</option>
+    </select>
+  </label>
+  <label class="filter-item" for="hostFilter">
+    <span class="filter-label">SVM / Host</span>
+    <select class="filter-select" id="hostFilter" disabled>
+      <option value="">Select SVM/Host</option>
+    </select>
+  </label>
+</section>
+
+<section class="stats-panel">
+  <div class="chart-title">{{ selected_stat.name }}</div>
+  <div class="chart-frame"><canvas id="statsChart"></canvas></div>
+  <div class="time-options">
+    <button class="time-btn" data-range="1h" type="button">1 Hour</button>
+    <button class="time-btn" data-range="6h" type="button">6 Hours</button>
+    <button class="time-btn" data-range="24h" type="button">24 Hours</button>
+    <button class="time-btn" data-range="7d" type="button">7 Days</button>
+    <button class="time-btn" data-range="30d" type="button">30 Days</button>
+    <button class="time-btn active" data-range="90d" type="button">90 Days</button>
+  </div>
+</section>
+
+<section class="stats-panel">
+  <h3>{{ selected_stat.name }} Details</h3>
+  <div class="stats-status" id="statsStatus">Loading data…</div>
+  <table class="data-table" id="statsDataTable" hidden>
+    <thead>
+      <tr><th>Timestamp</th><th>Cluster Target</th><th>Summary of Result</th></tr>
+    </thead>
+    <tbody id="statsTableBody"></tbody>
+  </table>
+</section>
+
+<script>
+(() => {
+  "use strict";
+
+  const config = JSON.parse(document.getElementById("selected-stat-config").textContent);
+  const azToPcs = JSON.parse(document.getElementById("stats-az-to-pcs").textContent);
+  const pcToPes = JSON.parse(document.getElementById("stats-pc-to-pes").textContent);
+  const status = document.getElementById("statsStatus");
+  const table = document.getElementById("statsDataTable");
+  const tableBody = document.getElementById("statsTableBody");
+  const azFilter = document.getElementById("azFilter");
+  const setupFilter = document.getElementById("setupFilter");
+  const hostFilter = document.getElementById("hostFilter");
+  let currentRange = "90d";
+
+  const chart = new Chart(document.getElementById("statsChart"), {
+    type: config.chart_type || "line",
+    data: {
+      labels: [],
+      datasets: [{
+        label: config.name,
+        data: [],
+        borderColor: "#1769b0",
+        backgroundColor: "rgba(23, 105, 176, .10)",
+        borderWidth: 3,
+        fill: true,
+        pointRadius: 3,
+        tension: .15
+      }]
+    },
+    options: {
+      maintainAspectRatio: false,
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxRotation: 45, minRotation: 45 } },
+        y: {
+          beginAtZero: true,
+          max: config.is_percentage ? 100 : undefined,
+          title: { display: true, text: config.y_axis || "Value" }
+        }
+      }
+    }
+  });
+
+  function replaceOptions(select, placeholder, options) {
+    select.replaceChildren(new Option(placeholder, ""));
+    options.forEach((item) => {
+      const value = typeof item === "string" ? item : item.key;
+      const label = typeof item === "string" ? item : item.label;
+      select.add(new Option(label, value));
+    });
+    select.disabled = options.length === 0;
+  }
+
+  function summarize(payload) {
+    try {
+      if (config.parser === "ahv_partition_usage") {
+        const clusterName = Object.keys(payload)[0];
+        const hosts = payload[clusterName] || [];
+        const firstHostData = hosts.find((item) => item && typeof item === "object") || {};
+        const firstHost = Object.keys(firstHostData)[0] || "Unknown";
+        const usage = parseFloat(String(firstHostData[firstHost]?.["/"]?.usage || "0").replace("%", ""));
+        return { value: usage, text: `Cluster ${clusterName}: root usage is ${usage}% on ${firstHost}; ${hosts.length} host(s) captured.` };
+      }
+      if (config.parser === "vm_power_states") {
+        let poweredOn = 0;
+        let poweredOff = 0;
+        Object.entries(payload).forEach(([key, value]) => {
+          if (key !== "Cluster_name" && value && typeof value === "object") {
+            poweredOn += Number(value.powered_on || 0);
+            poweredOff += Number(value.powered_off || 0);
+          }
+        });
+        return { value: poweredOn, text: `${payload.Cluster_name || "Cluster"}: ${poweredOn} VMs on and ${poweredOff} VMs off.` };
+      }
+      if (config.parser === "cluster_utilization") {
+        const cpu = Number(payload.cpu_usage_percent || 0);
+        return { value: cpu, text: `CPU: ${cpu}% | Memory: ${Number(payload.memory_usage_percent || 0)}% | IOPS: ${Number(payload.iops || 0)}` };
+      }
+      if (config.parser === "pgw_status") {
+        const online = payload.is_online ? 1 : 0;
+        return { value: online, text: `Prism Gateway is ${online ? "ONLINE" : "OFFLINE"}.` };
+      }
+      if (config.parser === "task_monitor") {
+        const failed = Array.isArray(payload.Failed) ? payload.Failed.length : 0;
+        const pending = Array.isArray(payload.Pending) ? payload.Pending.length : 0;
+        return { value: failed + pending, text: `${failed} failed task(s), ${pending} pending task(s).` };
+      }
+      const value = Array.isArray(payload) ? payload.length : Object.keys(payload || {}).length;
+      return { value, text: `Captured ${value} record(s).` };
+    } catch (error) {
+      console.error("Unable to summarize stats payload", error);
+      return { value: 0, text: "The record was captured but could not be summarized." };
+    }
+  }
+
+  function appendTableRow(item, summary) {
+    const row = tableBody.insertRow();
+    [item.timestamp, item.ip, summary].forEach((value, index) => {
+      const cell = row.insertCell();
+      cell.textContent = value == null ? "" : String(value);
+      if (index === 1) {
+        const content = cell.textContent;
+        cell.textContent = "";
+        const strong = document.createElement("strong");
+        strong.textContent = content;
+        cell.appendChild(strong);
+      }
+    });
+  }
+
+  async function fetchStatsData() {
+    status.hidden = false;
+    status.classList.remove("error");
+    status.textContent = "Loading data…";
+    table.hidden = true;
+
+    const target = hostFilter.value || setupFilter.value;
+    const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
+    if (target) params.set("target", target);
+
+    try {
+      const response = await fetch("{% url 'stats_data_api' %}?" + params.toString());
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load stats data.");
+
+      const seen = new Set();
+      const series = (payload.series || []).filter((item) => {
+        const key = `${item.timestamp}|${item.ip}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const labels = [];
+      const values = [];
+      tableBody.replaceChildren();
+
+      series.forEach((item) => {
+        const result = summarize(item.data);
+        const date = new Date(item.timestamp);
+        labels.push(currentRange.endsWith("h")
+          ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : date.toLocaleDateString([], { month: "short", day: "numeric" }));
+        values.push(result.value);
+        appendTableRow(item, result.text);
+      });
+
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = values;
+      chart.options.scales.y.suggestedMax = config.is_percentage
+        ? undefined
+        : Math.max(...values, 5);
+      chart.update();
+
+      status.hidden = series.length > 0;
+      status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+      table.hidden = series.length === 0;
+    } catch (error) {
+      status.hidden = false;
+      status.classList.add("error");
+      status.textContent = error.message;
+    }
+  }
+
+  azFilter.addEventListener("change", () => {
+    replaceOptions(setupFilter, "Select Setup", azToPcs[azFilter.value] || []);
+    replaceOptions(hostFilter, "Select SVM/Host", []);
+    fetchStatsData();
+  });
+
+  setupFilter.addEventListener("change", () => {
+    replaceOptions(hostFilter, "Select SVM/Host", pcToPes[setupFilter.value] || []);
+    fetchStatsData();
+  });
+  hostFilter.addEventListener("change", fetchStatsData);
+
+  document.querySelectorAll(".time-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      currentRange = button.dataset.range;
+      document.querySelectorAll(".time-btn").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      fetchStatsData();
+    });
+  });
+
+  fetchStatsData();
+})();
+</script>

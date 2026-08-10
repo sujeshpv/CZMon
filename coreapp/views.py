@@ -3,6 +3,8 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.conf import settings as dj_settings
 from django.http import JsonResponse
+from django.template import TemplateDoesNotExist
+from django.template.loader import get_template
 from urllib.parse import quote_plus
 from library.const import *
 import json
@@ -1367,80 +1369,164 @@ def settings_view(request):
     }
     return render(request, "settings.html", ctx)
 
-def stats_view(request):
-  """Renders the Stats page using the dynamic metric UI catalog."""
-  ctx = _build_overview_context()
-
-  # Load the registry from the static folder
+def _load_stats_registry():
+  """Load and validate the config-driven Stats page registry."""
   registry_path = os.path.join(
-    dj_settings.BASE_DIR, 'static', 'configurations', 'metric_ui_catalog.json'
+    dj_settings.BASE_DIR, "static", "configurations", "stats_registry.json"
   )
+  with open(registry_path, "r", encoding="utf-8") as registry_file:
+    raw_registry = json.load(registry_file)
+
+  if not isinstance(raw_registry, dict):
+    raise ValueError("The stats registry must be a JSON object.")
+
+  registry = {}
+  required_fields = {"name", "table_name", "summary", "page"}
+  for stat_key, config in raw_registry.items():
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(stat_key)):
+      raise ValueError(f"Invalid stat key: {stat_key}")
+    if not isinstance(config, dict):
+      raise ValueError(f"Configuration for '{stat_key}' must be an object.")
+
+    missing = required_fields.difference(config)
+    if missing:
+      raise ValueError(
+        f"Configuration for '{stat_key}' is missing: {', '.join(sorted(missing))}"
+      )
+
+    table_name = str(config["table_name"])
+    page = str(config["page"])
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table_name):
+      raise ValueError(f"Invalid table name configured for '{stat_key}'.")
+    if not page.startswith("stats_pages/") or not page.endswith(".html") or ".." in page:
+      raise ValueError(f"Invalid page configured for '{stat_key}'.")
+
+    try:
+      get_template(page)
+    except TemplateDoesNotExist as error:
+      raise ValueError(f"Page configured for '{stat_key}' does not exist: {page}") from error
+
+    registry[str(stat_key)] = config
+
+  return registry
+
+
+def stats_view(request):
+  """Render the generic Stats selector and its configured stats page."""
+  ctx = _build_overview_context()
+  ctx["stats_registry"] = {}
+  ctx["selected_stat_key"] = ""
+  ctx["selected_stat"] = None
+
   try:
-    with open(registry_path, 'r') as f:
-      ctx['stats_registry'] = json.load(f)
-  except Exception as e:
-    # Fallback if file is missing or has a typo
-    ctx['stats_registry'] = {}
-    ctx['registry_error'] = str(e)
+    registry = _load_stats_registry()
+    ctx["stats_registry"] = registry
+    selected_key = (request.GET.get("stat") or "").strip()
+    if selected_key:
+      if selected_key not in registry:
+        ctx["selection_error"] = "The selected stat is not configured."
+      else:
+        ctx["selected_stat_key"] = selected_key
+        ctx["selected_stat"] = registry[selected_key]
+  except (OSError, ValueError, json.JSONDecodeError) as error:
+    ctx["registry_error"] = str(error)
 
   return render(request, "stats.html", ctx)
 
+
 def stats_data_api(request):
-  """API to fetch historical data with dynamic time-range filtering."""
-  metric = request.GET.get("metric", "")
-  range_key = request.GET.get("range", "90d")
+  """Return data only from a DB table allowlisted in the Stats registry."""
+  stat_key = (request.GET.get("stat") or "").strip()
+  range_key = (request.GET.get("range") or "90d").strip()
+  target = _extract_ipv4(request.GET.get("target"))
   db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
 
-  if not os.path.exists(db_path) or not metric:
+  try:
+    config = _load_stats_registry().get(stat_key)
+  except (OSError, ValueError, json.JSONDecodeError) as error:
+    return JsonResponse({"error": f"Invalid stats registry: {error}"}, status=500)
+
+  if not config:
+    return JsonResponse({"error": "Unknown stat."}, status=400)
+  if not os.path.exists(db_path):
     return JsonResponse({"series": []})
 
-  # Map UI ranges to SQLite-compatible time modifiers
   time_map = {
     "1h": "-1 hour",
     "6h": "-6 hours",
     "24h": "-24 hours",
     "7d": "-7 days",
     "30d": "-30 days",
-    "90d": "-90 days"
+    "90d": "-90 days",
   }
   time_modifier = time_map.get(range_key, "-90 days")
-
+  table_name = config["table_name"]
   data_points = []
+
   try:
     with sqlite3.connect(db_path) as conn:
       conn.row_factory = sqlite3.Row
       cursor = conn.cursor()
-
-      # Check if the specific script table exists
-      cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (metric,)
-      )
-      if not cursor.fetchone():
+      table_exists = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+      ).fetchone()
+      if not table_exists:
         return JsonResponse({"series": []})
 
-      # Generic query for any table generated by the local_processor
+      columns = {
+        row["name"] for row in cursor.execute(f'PRAGMA table_info("{table_name}")')
+      }
+      if "created_at" not in columns:
+        return JsonResponse(
+          {"error": f"Configured table '{table_name}' has no created_at column."},
+          status=500,
+        )
+
+      where = ["created_at >= datetime('now', ?)"]
+      params = [time_modifier]
+      if target and "ip_address" in columns:
+        where.append("ip_address = ?")
+        params.append(target)
+
       query = f"""
-        SELECT * FROM {metric}
-        WHERE created_at >= datetime('now', ?)
+        SELECT * FROM "{table_name}"
+        WHERE {' AND '.join(where)}
         ORDER BY created_at DESC
         LIMIT 100
       """
-      rows = cursor.execute(query, [time_modifier]).fetchall()
+      rows = cursor.execute(query, params).fetchall()
 
       for row in rows:
         row_dict = dict(row)
-        ip = row_dict.get("ip_address", "Unknown")
-        # Support both local_processor schema formats
+        ip = (
+          row_dict.get("ip_address")
+          or row_dict.get("cluster_name")
+          or row_dict.get("ip")
+          or "Unknown"
+        )
         raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
-        try:
-          payload = json.loads(raw_data)
-        except Exception:
-          payload = {"raw": raw_data}
+        if isinstance(raw_data, (dict, list)):
+          payload = raw_data
+        else:
+          try:
+            payload = json.loads(raw_data)
+          except (TypeError, json.JSONDecodeError):
+            payload = {"raw": raw_data}
 
-        timestamp = row_dict.get("created_at", "Latest")
-        data_points.append({"timestamp": timestamp, "ip": ip, "data": payload})
+        data_points.append(
+          {
+            "timestamp": row_dict.get("created_at", "Latest"),
+            "ip": ip,
+            "data": payload,
+          }
+        )
+  except sqlite3.Error as error:
+    return JsonResponse({"error": f"Failed loading stats data: {error}"}, status=500)
 
-  except Exception as e:
-    return JsonResponse({"error": str(e)}, status=500)
-
-  return JsonResponse({"series": data_points[::-1]})
+  return JsonResponse(
+    {
+      "stat": stat_key,
+      "name": config["name"],
+      "series": data_points[::-1],
+    }
+  )

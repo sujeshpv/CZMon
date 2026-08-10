@@ -1,132 +1,56 @@
 {% extends "pe_base.html" %}
 
 {% block content %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
 <style>
-  .stats-container { background-color: #f4f5f8; padding: 20px; font-family: Arial, sans-serif; min-height: 900px; }
-  .stats-panel { background-color: #ffffff; border: 1px solid #d3d5d9; border-radius: 6px; padding: 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-  .filter-group { display: flex; gap: 40px; align-items: center; }
+  .stats-container { background: #f4f5f8; min-height: 900px; padding: 20px; font-family: Arial, sans-serif; }
+  .stats-panel { background: #fff; border: 1px solid #d3d5d9; border-radius: 7px; box-shadow: 0 1px 3px rgba(0, 0, 0, .05); margin-bottom: 20px; padding: 20px; }
+  .stat-picker { display: flex; align-items: end; gap: 14px; flex-wrap: wrap; }
   .filter-item { display: flex; flex-direction: column; gap: 8px; }
-  .filter-label { font-weight: bold; color: #1a4f9c; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .filter-select { padding: 10px; border: 1px solid #ccc; border-radius: 4px; min-width: 200px; font-size: 14px; background-color: #fbfbfb; color: #333; }
-  .metric-row { display: flex; align-items: center; gap: 20px; }
-  .chart-title { text-align: center; font-weight: bold; color: #444; margin-bottom: 25px; font-size: 18px; }
-  .chart-footer-label { text-align: center; color: #888; font-size: 13px; margin-top: 15px; font-style: italic; }
-  .time-buttons { display: flex; justify-content: center; gap: 12px; margin-top: 25px; }
-  .time-btn { padding: 10px 20px; border: 1px solid #ccc; background-color: #f8f9fa; color: #444; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s ease; }
-  .time-btn:hover { background-color: #e2e6ea; }
-  .time-btn.active { background-color: #2f60a8; color: #ffffff; border-color: #2f60a8; }
-  canvas { width: 100% !important; height: 400px !important; }
+  .filter-label { color: #14589b; font-size: 14px; font-weight: 700; }
+  .filter-select { background: #fff; border: 1px solid #c8ccd2; border-radius: 4px; font-size: 14px; min-width: 310px; padding: 10px 12px; }
+  .load-stat-button { background: #1769b0; border: 1px solid #1769b0; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px; font-weight: 700; padding: 10px 22px; }
+  .load-stat-button:hover { background: #12578f; }
+  .stat-summary { color: #58616c; line-height: 1.5; margin: 14px 0 0; }
+  .stats-message { border-radius: 4px; padding: 12px 14px; }
+  .stats-message.error { background: #fff0f0; color: #9d1c1c; }
+  .stats-message.empty { background: #eef5fb; color: #35536c; }
 </style>
 
 <div class="stats-container">
-  <div class="stats-panel metric-row">
-    <span class="filter-label" style="font-size: 15px;">Selected Metric:</span>
-    <select id="metricFilter" class="filter-select" style="min-width: 300px;" onchange="fetchStatsData()">
-      {% for key, config in stats_registry.items %}
-        <option value="{{ key }}" data-y-axis="{{ config.y_axis }}" data-is-pct="{{ config.is_percentage|yesno:'true,false' }}">
-          {{ config.label }}
-        </option>
-      {% endfor %}
-    </select>
-  </div>
+  <form class="stats-panel stat-picker" method="get">
+    <label class="filter-item" for="statSelector">
+      <span class="filter-label">Stat</span>
+      <select class="filter-select" id="statSelector" name="stat" required>
+        <option value="">Select a stat</option>
+        {% for key, config in stats_registry.items %}
+          <option value="{{ key }}" {% if key == selected_stat_key %}selected{% endif %}>
+            {{ config.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="load-stat-button" type="submit">Load Stat</button>
+  </form>
 
-  <div class="stats-panel filter-group">
-    <div class="filter-item"><span class="filter-label">Availability Zone</span><select id="azFilter" class="filter-select" onchange="fetchStatsData()"><option value="all">Select AZ</option>{% for az in azs %}<option value="{{ az }}">{{ az }}</option>{% endfor %}</select></div>
-    <div class="filter-item"><span class="filter-label">Setup / PC</span><select id="setupFilter" class="filter-select" onchange="fetchStatsData()"><option value="all">Select Setup</option>{% for pc in pcs %}<option value="{{ pc.ip }}">{{ pc.name }}</option>{% endfor %}</select></div>
-    <div class="filter-item"><span class="filter-label">SVM / Host</span><select id="hostFilter" class="filter-select" onchange="fetchStatsData()"><option value="all">Select SVM/Host</option>{% for pe in pes %}<option value="{{ pe.ip }}">{{ pe.name }}</option>{% endfor %}</select></div>
-  </div>
-
-  <div class="stats-panel">
-    <div class="chart-title" id="chartMainTitle">Initializing Dashboard...</div>
-    <div style="position: relative; width: 100%;"><canvas id="statsChart"></canvas></div>
-    <div class="chart-footer-label" id="chartFooterLabel">Historical Trend Analysis</div>
-    <div class="time-buttons">
-      <button class="time-btn" onclick="setTimeRange('1h', this)">1 Hour</button>
-      <button class="time-btn" onclick="setTimeRange('6h', this)">6 Hours</button>
-      <button class="time-btn" onclick="setTimeRange('24h', this)">24 Hours</button>
-      <button class="time-btn" onclick="setTimeRange('7d', this)">7 Days</button>
-      <button class="time-btn" onclick="setTimeRange('30d', this)">30 Days</button>
-      <button class="time-btn active" onclick="setTimeRange('90d', this)">90 Days</button>
+  {% if registry_error %}
+    <div class="stats-panel stats-message error">
+      The stats registry could not be loaded: {{ registry_error }}
     </div>
-  </div>
+  {% elif selection_error %}
+    <div class="stats-panel stats-message error">{{ selection_error }}</div>
+  {% elif selected_stat %}
+    <section class="stats-panel">
+      <h2 style="margin: 0;">{{ selected_stat.name }}</h2>
+      <p class="stat-summary">{{ selected_stat.summary }}</p>
+    </section>
+    {{ selected_stat|json_script:"selected-stat-config" }}
+    {{ az_to_pcs|json_script:"stats-az-to-pcs" }}
+    {{ pc_to_pes|json_script:"stats-pc-to-pes" }}
+    {% include selected_stat.page %}
+  {% else %}
+    <div class="stats-panel stats-message empty">
+      Choose a stat above and click <strong>Load Stat</strong> to display its page.
+    </div>
+  {% endif %}
 </div>
-
-<script>
-let statsChartInstance = null;
-let currentRange = '90d'; // Keep track of range globally
-
-function initChart() {
-  const ctx = document.getElementById('statsChart').getContext('2d');
-  statsChartInstance = new Chart(ctx, {
-    type: 'line',
-    data: { labels: [], datasets: [{ label: 'Value', data: [], borderColor: '#1a4f9c', backgroundColor: 'rgba(26, 79, 156, 0.08)', borderWidth: 3, pointRadius: 4, tension: 0.15, fill: true }] },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { display: true, grid: { display: false }, ticks: { maxRotation: 45, minRotation: 45, color: '#666' } },
-        y: { 
-            display: true, beginAtZero: true, grid: { color: '#efefef' },
-            title: { display: true, text: 'Value', color: '#1a4f9c', font: { weight: 'bold' } },
-            ticks: { stepSize: 1, callback: function(value) { if (value % 1 === 0) { return value; } } }
-        }
-      }
-    }
-  });
-}
-
-function fetchStatsData() {
-  const filter = document.getElementById('metricFilter');
-  const metric = filter.value;
-  const selectedOption = filter.options[filter.selectedIndex];
-  const yAxisLabel = selectedOption.getAttribute('data-y-axis') || "Count";
-  const isPercentage = selectedOption.getAttribute('data-is-pct') === "true";
-
-  document.getElementById('chartMainTitle').innerText = selectedOption.text;
-
-  // PASS THE RANGE PARAMETER TO THE BACKEND
-  fetch(`/api/stats-data/?metric=${metric}&range=${currentRange}`).then(res => res.json()).then(data => {
-    const series = data.series || [];
-
-    // Format X-axis: Time for <24h, Date for >24h
-    const labels = series.map(item => {
-        const d = new Date(item.timestamp);
-        return currentRange.includes('h') ? d.toTimeString().substring(0, 5) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    });
-
-    const chartValues = series.map(item => {
-      const p = item.data;
-      if (metric.includes("underutilized")) { try { return parseFloat(p[Object.keys(p)[0]].cpu_percent || 0); } catch(e) {return 0;} }
-      if (metric.includes("ahv")) { try { let m = 0; for(let h in p) { if(parseFloat(p[h].usage_pct) > m) m = parseFloat(p[h].usage_pct); } return m; } catch(e) {return 0;} }
-      return Array.isArray(p) ? p.length : Object.keys(p).length;
-    });
-
-    statsChartInstance.data.labels = labels;
-    statsChartInstance.data.datasets[0].data = chartValues;
-    statsChartInstance.options.scales.y.title.text = yAxisLabel;
-
-    if (isPercentage) {
-      statsChartInstance.options.scales.y.max = 100;
-      statsChartInstance.options.scales.y.ticks.stepSize = null;
-    } else {
-      delete statsChartInstance.options.scales.y.max;
-      statsChartInstance.options.scales.y.suggestedMax = 5;
-      statsChartInstance.options.scales.y.ticks.stepSize = 1;
-    }
-    statsChartInstance.update();
-  });
-}
-
-function setTimeRange(range, btnElement) {
-    currentRange = range;
-    document.querySelectorAll('.time-btn').forEach(btn => btn.classList.remove('active'));
-    btnElement.classList.add('active');
-    document.getElementById('chartFooterLabel').innerText = `Trend for last ${btnElement.innerText}`;
-    fetchStatsData();
-}
-
-document.addEventListener("DOMContentLoaded", () => { initChart(); fetchStatsData(); });
-</script>
 {% endblock %}

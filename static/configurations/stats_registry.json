@@ -1,0 +1,52 @@
+{
+  "ahv_partition_usage": {
+    "name": "AHV Partition Usage",
+    "table_name": "check_ahv_home_usage",
+    "summary": "Partition space and usage statistics for AHV hosts.",
+    "page": "stats_pages/time_series.html",
+    "parser": "ahv_partition_usage",
+    "chart_type": "line",
+    "y_axis": "Usage %",
+    "is_percentage": true
+  },
+  "pgw_status": {
+    "name": "PGW Status",
+    "table_name": "check_pgw_status",
+    "summary": "Operational status of Prism Gateway nodes.",
+    "page": "stats_pages/time_series.html",
+    "parser": "pgw_status",
+    "chart_type": "line",
+    "y_axis": "Nodes",
+    "is_percentage": false
+  },
+  "vm_power_states": {
+    "name": "VM Power States",
+    "table_name": "check_vm_power_states",
+    "summary": "Total counts of powered on and powered off VMs.",
+    "page": "stats_pages/time_series.html",
+    "parser": "vm_power_states",
+    "chart_type": "line",
+    "y_axis": "VMs",
+    "is_percentage": false
+  },
+  "task_monitor": {
+    "name": "Task Monitor",
+    "table_name": "task_monitor",
+    "summary": "Monitoring of failed and long-running Acropolis tasks.",
+    "page": "stats_pages/time_series.html",
+    "parser": "task_monitor",
+    "chart_type": "line",
+    "y_axis": "Tasks",
+    "is_percentage": false
+  },
+  "underutilized_cluster": {
+    "name": "Underutilized Cluster",
+    "table_name": "check_underutilized_cluster",
+    "summary": "CPU and memory usage data for cluster optimization.",
+    "page": "stats_pages/time_series.html",
+    "parser": "cluster_utilization",
+    "chart_type": "line",
+    "y_axis": "Usage %",
+    "is_percentage": true
+  }
+}
