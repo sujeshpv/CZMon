@@ -1,6 +1,38 @@
 {
   "check_pgw_status": {
-  "description": "Runs local python script for PGW Status (Demo)",
-  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
+    "description": "verify Prism Gateway (PGW) Status across PC and PE instances",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_pgw_status.py"]
+  },
+  "check_vm_power_states": {
+    "description": "Checks powered on/off VM counts and affinity status per host",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_vm_power_states.py"]
+  },
+  "task_monitor": {
+    "description": "Monitors active, pending, and historical acropolis tasks on Prism Central",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/task_monitor.py"]
+  },
+  "check_ahv_home_usage": {
+    "description": "Checks /home partition available, actual, and usage percentage on all AHV hosts",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_ahv_home_usage.py"]
+  },
+  "check_underutilized_cluster": {
+    "description": "Monitors CPU, memory, and IOPS usage for cluster optimization",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_underutilized_cluster.py"]
+  },
+  "expired_snapshots": {
+    "description": "Runs local python script for Expired Snapshots verification",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/expired_snapshots.py"]
+  },
+  "node_check_crash": {
+    "description": "Audits clusters for SIGSEGV crashes",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/node_check_crash.py"]
+  },
+  "node_tool": {
+    "description": "Verifies Cassandra ring consistency",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/node_tool.py"]
+  },
+  "vm_crud": {
+    "description": "Performs VM Create, Update, Delete sanity checks",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/vm_crud.py"]
   }
 }
