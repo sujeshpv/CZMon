@@ -1,87 +1,119 @@
-"""Verifies Prism Gateway (PGW) status and saves to the database."""
+"""Checks Prism Gateway (PGW) heartbeat status for Nutanix clusters.
+
+This script connects to the Nutanix Prism API to verify PGW status.
+It is designed to run independently and print pure JSON for the CZMon framework.
+"""
 
 import json
+import logging
+import os
+import sys
 import requests
 import urllib3
 
-# Disable insecure request warnings
+# Disable insecure request warnings for self-signed certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def verify_pgw_status(ip: str, username: str, password: str) -> tuple:
-  """Checks the Prism Gateway heartbeat status.
-  Returns a tuple of (status_data_dict, is_online_boolean).
+# --- Global Configurations ---
+DEF_UNAME = "admin"
+DEF_PWD = "Nutanix.123"
+
+logger = logging.getLogger(__name__)
+
+def verify_pgw_status(
+  ip: str, username: str, password: str
+) -> dict:
+  """Connects to Nutanix Prism Gateway API to check heartbeat status.
+
+  Args:
+    ip (str): The Prism Element or Prism Central Cluster IP / virtual IP.
+    username (str): The Username for authentication.
+    password (str): The Password for authentication.
+
+  Returns:
+    dict: A dictionary containing online status and heartbeat data or error message.
   """
   url = f"https://{ip}:9440/PrismGateway/services/rest/v1/heartbeat"
   auth = (username, password)
+  headers = {"Content-Type": "application/json", "Accept": "application/json"}
 
   try:
-    response = requests.get(
-      url,
-      auth=auth,
-      verify=False,
-      timeout=10,
-      headers={"Content-Type": "application/json"}
+    resp = requests.get(
+      url, auth=auth, headers=headers, verify=False, timeout=15
     )
-    response.raise_for_status()
-    # Return the JSON data, and True (online)
-    return response.json(), True
-  except Exception as e:
-    # Return the error string, and False (offline)
-    return {"error": str(e)}, False
+    resp.raise_for_status()
+    heartbeat_data = resp.json()
 
-def run_pgw_collection(config_path=None):
-  """Reads endpoints from config and persists PGW status to DB."""
+    logger.info(f"PGW status check successful for {ip}")
+    return {
+      "is_online": True,
+      "status_data": heartbeat_data
+    }
 
-  # MOVE THE IMPORTS HERE!
-  import os
-  from django.conf import settings
-  from coreapp.models import PrismGatewayStatus
+  except requests.exceptions.RequestException as e:
+    logger.error(f"API Request Failed for {ip}: {e}")
+    return {
+      "is_online": False,
+      "error_message": str(e)
+    }
 
-  # Automatically find the endpoints.json file in the Django project
+def run_pgw_collection(config_path: str = None) -> None:
+  """Reads endpoints, collects PGW status, and prints JSON.
+
+  Args:
+    config_path (str, optional): Path to the endpoints JSON config file.
+                                 Defaults to None (auto-resolves path).
+  """
   if not config_path:
-    config_path = os.path.join(settings.BASE_DIR, "static", "configurations", "endpoints.json")
+    base_dir = os.path.dirname(
+      os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+    config_path = os.path.join(
+      base_dir, "static", "configurations", "endpoints.json"
+    )
 
   try:
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
       config_data = json.load(f)
   except Exception as e:
-    print(f"Failed to load config: {str(e)}")
-    return
+    logger.error(f"Failed to load config at {config_path}: {e}")
+    sys.exit(1)
 
-  # Extract all endpoints from the zones (Matches the new endpoints.json format!)
-  all_endpoints = [entry for zone in config_data.values() for entry in zone]
+  # Handle BOTH endpoints.json formats automatically
+  all_endpoints = []
+  if "pes" in config_data or "pcs" in config_data:
+    all_endpoints.extend(config_data.get("pes", []))
+    all_endpoints.extend(config_data.get("pcs", []))
+  else:
+    for zone, entries in config_data.items():
+      if isinstance(entries, list):
+        all_endpoints.extend(entries)
+
+  final_results = {}
 
   for endpoint in all_endpoints:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
-    user = creds.get("user", "admin")
-    pwd = creds.get("password", "Nutanix.123")
+
+    # Use the global variables as fallback credentials
+    user = creds.get("username", creds.get("user", DEF_UNAME))
+    pwd = creds.get("password", DEF_PWD)
 
     if not ip:
       continue
 
-    # Get the data from the API
-    status_data, is_online = verify_pgw_status(ip, user, pwd)
+    logger.info(f"Checking PGW status for cluster: {ip}...")
+    final_results[ip] = verify_pgw_status(ip, user, pwd)
 
-    # Save or update the data in the Django database table
-    obj, created = PrismGatewayStatus.objects.update_or_create(
-      ip_address=ip,
-      defaults={
-        "is_online": is_online,
-        "status_data": status_data,
-      }
-    )
-
-    action = "Created" if created else "Updated"
-    status_text = "Online" if is_online else "Offline"
-    print(f"{action} DB record for {ip} -> {status_text}")
+  # Print pure JSON to stdout so local_processor.py can parse it
+  print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
-  # Setup Django environment so it can run standalone
-  import os
-  import django
-  os.environ.setdefault("DJANGO_SETTINGS_MODULE", "czmon.settings")
-  django.setup()
-
+  # Python's logging module writes to stderr by default.
+  # This keeps our logs separate from the printed JSON on stdout.
+  logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+  )
   run_pgw_collection()
 
