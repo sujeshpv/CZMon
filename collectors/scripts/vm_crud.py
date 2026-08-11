@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -22,6 +23,11 @@ VM_NAME_PREFIX = "sanity-"
 
 # Interval in seconds between API polling requests
 POLL_INTERVAL_SECS = 2
+
+# Status dictionary keys
+KEY_CREATE_RESULT = "vm_create_result"
+KEY_UPDATE_RESULT = "vm_update_result"
+KEY_DELETE_RESULT = "vm_delete_result"
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +75,7 @@ def wait_for_task(
   pwd: str,
   timeout_secs: int = 20
 ) -> bool:
-  """Polls a Nutanix task until it succeeds, fails, or times out.
+  """Polls a Nutanix task till it succeeds, fails, or times out.
 
   Args:
     ip_address (str): The IP of the cluster where the task is running.
@@ -181,6 +187,9 @@ def create_vm(ip: str, user: str, pwd: str) -> Tuple[Optional[str], bool]:
     "metadata": {"kind": "vm"},
   }
 
+  vm_uuid = None
+  task_uuid = None
+
   try:
     data = make_api_call(ip, "POST", "/api/nutanix/v3/vms", payload, user, pwd)
     vm_uuid = data.get("metadata", {}).get("uuid")
@@ -236,7 +245,7 @@ def update_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
     return False
 
 def delete_vm(ip: str, vm_uuid: str, user: str, pwd: str) -> bool:
-  """Deletes the test VM and polls until the API returns 404 Not Found.
+  """Deletes the test VM and polls till the API returns 404 Not Found.
 
   Args:
     ip (str): Cluster IP address.
@@ -297,10 +306,11 @@ def run_vm_sanity(config_path: str = None) -> None:
     user = pc.get("user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pc.get("password", creds.get("password", DEF_PWD))
 
+    # Use the global constants for the dictionary keys
     status = {
-      "vm_create_result": False,
-      "vm_update_result": False,
-      "vm_delete_result": False,
+      KEY_CREATE_RESULT: False,
+      KEY_UPDATE_RESULT: False,
+      KEY_DELETE_RESULT: False,
     }
 
     logger.info(
@@ -309,13 +319,13 @@ def run_vm_sanity(config_path: str = None) -> None:
 
     try:
       vm_uuid, create_ok = create_vm(ip_addr, user, pwd)
-      status["vm_create_result"] = create_ok
+      status[KEY_CREATE_RESULT] = create_ok
 
       if vm_uuid and create_ok:
-        status["vm_update_result"] = update_vm(ip_addr, vm_uuid, user, pwd)
+        status[KEY_UPDATE_RESULT] = update_vm(ip_addr, vm_uuid, user, pwd)
 
       if vm_uuid:
-        status["vm_delete_result"] = delete_vm(ip_addr, vm_uuid, user, pwd)
+        status[KEY_DELETE_RESULT] = delete_vm(ip_addr, vm_uuid, user, pwd)
 
     except Exception as e:
       logger.error(f"Sanity Error on {name}: {e}")
