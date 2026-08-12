@@ -32,5 +32,14 @@
   "snapshot_usage_tracker": {
     "description": "Tracks Recovery Point storage usage percentages",
     "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
+ 
+  "snapshot_usage_tracker": {
+  "description": "Tracks Recovery Point storage usage percentages",
+  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
+  },
+
+  "vm_crud": {
+  "description": "Performs VM Create, Update, Delete sanity checks",
+  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/vm_crud.py"]
   }
 }
