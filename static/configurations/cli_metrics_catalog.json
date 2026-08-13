@@ -6,10 +6,9 @@
   },
 
   "cassandra_node_consistency": {
-  "description": "Runs svmips and nodetool ring to verify Cassandra consistency",
-  "command": ["bash -lc 'svmips && echo \"---SPLIT---\" && nodetool -h 0 ring'"],
-  "endpoint_type": "PE"
+    "description": "Runs nodetool ring to verify Cassandra consistency",
+    "command": ["nodetool -h 0 ring"],
+    "endpoint_type": "PE"
   }
-
-
 }
+
