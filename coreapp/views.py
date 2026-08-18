@@ -1589,27 +1589,19 @@ def _normalize_stats_payload(stat_key, payload):
     }
 
   if stat_key == "task_monitor":
-    aliases = {
-      "completed": ("Completed", "Succeeded"),
-      "running": ("Running",),
-      "pending": ("Pending", "Suspended", "Canceling"),
-      "queued": ("Queued",),
-      "failed": ("Failed",),
+    values = {
+      "pending": len(payload.get("Pending", []))
+      if isinstance(payload.get("Pending"), list) else 0,
+      "failed": len(payload.get("Failed", []))
+      if isinstance(payload.get("Failed"), list) else 0,
     }
-    values = {}
-    for chart_key, source_keys in aliases.items():
-      values[chart_key] = sum(
-        len(payload.get(source_key, []))
-        for source_key in source_keys
-        if isinstance(payload.get(source_key), list)
-      )
     total = sum(values.values())
-    summary = ", ".join(
-      f"{values[key]} {key}" for key in ("completed", "running", "pending", "queued", "failed")
-    )
     return {
       "values": values,
-      "summary": f"Total {total} tasks: {summary}.",
+      "summary": (
+        f"Total {total} monitored tasks: {values['pending']} pending, "
+        f"{values['failed']} failed."
+      ),
       "details": {"total": total, "counts": values, "tasks": payload},
     }
 

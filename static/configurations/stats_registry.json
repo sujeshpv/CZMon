@@ -50,7 +50,7 @@
   "task_monitor": {
     "name": "Task Monitor",
     "table_name": "task_monitor",
-    "summary": "Completed, running, pending, queued, and failed Prism Central tasks.",
+    "summary": "Failed and overdue pending Prism Central tasks.",
     "page": "stats_pages/time_series.html",
     "parser": "task_monitor",
     "chart_type": "line",
@@ -60,10 +60,7 @@
     "endpoint_types": ["PC"],
     "target_labels": {"PC": "PC"},
     "datasets": [
-      {"key": "completed", "label": "Completed", "color": "#218838", "axis": "y"},
-      {"key": "running", "label": "Running", "color": "#1769b0", "axis": "y"},
       {"key": "pending", "label": "Pending", "color": "#fd7e14", "axis": "y"},
-      {"key": "queued", "label": "Queued", "color": "#6f42c1", "axis": "y"},
       {"key": "failed", "label": "Failed", "color": "#c82333", "axis": "y"}
     ]
   },

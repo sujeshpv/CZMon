@@ -150,11 +150,8 @@ class StatsFrameworkTests(TestCase):
         tasks = _normalize_stats_payload(
             "task_monitor",
             {
-                "Completed": [{"id": "done-1"}],
-                "Running": [{"id": "run-1"}],
-                "Pending": [],
-                "Queued": [{"id": "queue-1"}],
-                "Failed": [],
+                "Pending": [{"pending-1": "Running task"}],
+                "Failed": [{"failed-1": "Failure detail"}],
             },
         )
 
@@ -167,7 +164,8 @@ class StatsFrameworkTests(TestCase):
             {"cpu": 12.5, "memory": 30.0, "iops": 90.0},
         )
         self.assertEqual(pgw["values"], {"status": 1})
-        self.assertEqual(tasks["details"]["total"], 3)
+        self.assertEqual(tasks["values"], {"pending": 1, "failed": 1})
+        self.assertEqual(tasks["details"]["total"], 2)
 
     def test_ahv_normalization_keeps_all_partition_details(self):
         payload = {
@@ -189,7 +187,7 @@ class StatsFrameworkTests(TestCase):
 
 class TaskMonitorCollectorTests(SimpleTestCase):
     @patch("collectors.scripts.task_monitor.requests.get")
-    def test_task_collector_preserves_all_requested_statuses(self, mock_get):
+    def test_task_collector_keeps_failed_and_overdue_active_tasks(self, mock_get):
         response = Mock()
         response.raise_for_status.return_value = None
         response.json.return_value = {
@@ -225,11 +223,9 @@ class TaskMonitorCollectorTests(SimpleTestCase):
 
         result = get_tasks_from_pc("10.1.1.1", "admin", "secret", 2, 0.25)
 
-        self.assertEqual(len(result["Completed"]), 1)
-        self.assertEqual(len(result["Running"]), 1)
-        self.assertEqual(len(result["Queued"]), 1)
+        self.assertEqual(len(result["Pending"]), 2)
         self.assertEqual(len(result["Failed"]), 1)
-        self.assertEqual(result["Failed"][0]["error"], "Failure detail")
+        self.assertEqual(result["Failed"][0], {"failed-1": "Failure detail"})
 
 
 class UnderutilizedClusterCollectorTests(SimpleTestCase):
