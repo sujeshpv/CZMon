@@ -86,6 +86,9 @@ class StatsFrameworkTests(TestCase):
         self.assertContains(response, "Snapshot Data")
         self.assertContains(response, "Snapshot usage and age.")
         self.assertContains(response, 'id="statsChart"')
+        self.assertContains(response, 'data-range="12h"')
+        self.assertNotContains(response, 'data-range="1h"')
+        self.assertNotContains(response, 'data-range="6h"')
 
     def test_stats_api_resolves_table_from_registry(self):
         response = self.client.get(
@@ -123,6 +126,14 @@ class StatsFrameworkTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_stats_api_accepts_twelve_hour_range(self):
+        response = self.client.get(
+            reverse("stats_data_api"),
+            {"stat": "snapshot_data", "range": "12h"},
+        )
+
+        self.assertEqual(response.status_code, 200)
 
     def test_stats_target_names_are_loaded_from_collected_clusters(self):
         self.assertEqual(

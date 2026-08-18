@@ -10,18 +10,24 @@
   .time-btn.active { background: #1769b0; border-color: #1769b0; color: #fff; }
   .stats-status { color: #66717d; padding: 18px 12px; text-align: center; }
   .stats-status.error { color: #9d1c1c; }
-  .point-modal-backdrop { align-items: center; background: rgba(20, 31, 43, .55); display: flex; inset: 0; justify-content: center; padding: 24px; position: fixed; z-index: 1000; }
-  .point-modal-backdrop[hidden] { display: none; }
-  .point-modal { background: #fff; border-radius: 8px; box-shadow: 0 18px 50px rgba(0, 0, 0, .28); max-height: 85vh; max-width: 760px; overflow: auto; width: 100%; }
-  .point-modal-header { align-items: center; border-bottom: 1px solid #e1e5e9; display: flex; justify-content: space-between; padding: 18px 22px; }
-  .point-modal-header h3 { color: #14589b; margin: 0; }
-  .point-modal-close { background: transparent; border: 0; color: #52606d; cursor: pointer; font-size: 28px; line-height: 1; padding: 2px 6px; }
-  .point-modal-body { padding: 20px 22px; }
+  .point-details-panel[hidden] { display: none; }
+  .point-details-header { align-items: center; display: flex; justify-content: space-between; }
+  .point-details-header h3 { color: #14589b; margin: 0; }
+  .point-details-clear { background: #fff; border: 1px solid #b9c2cc; border-radius: 4px; color: #45515d; cursor: pointer; padding: 7px 12px; }
   .point-meta { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
   .point-meta-item { background: #f7f9fb; border-radius: 4px; padding: 10px 12px; }
   .point-meta-label { color: #66717d; display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
-  .point-summary { line-height: 1.5; margin: 0 0 16px; }
-  .point-modal pre { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 4px; max-height: 360px; overflow: auto; padding: 12px; white-space: pre-wrap; }
+  .point-summary { line-height: 1.5; margin: 16px 0; }
+  .metric-detail-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 14px 0; }
+  .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; padding: 14px; }
+  .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; }
+  .metric-detail-table { border-collapse: collapse; margin-top: 14px; width: 100%; }
+  .metric-detail-table th { background: #f4f7fa; color: #14589b; font-size: 13px; text-align: left; }
+  .metric-detail-table th, .metric-detail-table td { border: 1px solid #e1e5e9; padding: 9px 11px; vertical-align: top; }
+  .metric-detail-table td { font-size: 13px; }
+  .detail-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
+  .detail-selectors .filter-select { min-width: 220px; }
+  .detail-help { color: #66717d; margin: 14px 0 0; }
   @media (max-width: 640px) { .point-meta { grid-template-columns: 1fr; } }
 </style>
 
@@ -52,8 +58,7 @@
   <div class="chart-frame"><canvas id="statsChart"></canvas></div>
   <div class="stats-status" id="statsStatus">Loading data…</div>
   <div class="time-options">
-    <button class="time-btn" data-range="1h" type="button">1 Hour</button>
-    <button class="time-btn" data-range="6h" type="button">6 Hours</button>
+    <button class="time-btn" data-range="12h" type="button">12 Hours</button>
     <button class="time-btn" data-range="24h" type="button">24 Hours</button>
     <button class="time-btn" data-range="7d" type="button">7 Days</button>
     <button class="time-btn" data-range="30d" type="button">30 Days</button>
@@ -61,29 +66,24 @@
   </div>
 </section>
 
-<div class="point-modal-backdrop" id="pointDetailsModal" hidden>
-  <section aria-labelledby="pointDetailsTitle" aria-modal="true" class="point-modal" role="dialog">
-    <header class="point-modal-header">
-      <h3 id="pointDetailsTitle">{{ selected_stat.name }} Details</h3>
-      <button aria-label="Close details" class="point-modal-close" id="pointDetailsClose" type="button">&times;</button>
-    </header>
-    <div class="point-modal-body">
-      <div class="point-meta">
-        <div class="point-meta-item">
-          <span class="point-meta-label">Target</span>
-          <strong id="pointDetailsTarget"></strong>
-        </div>
-        <div class="point-meta-item">
-          <span class="point-meta-label">Timestamp</span>
-          <strong id="pointDetailsTimestamp"></strong>
-        </div>
-      </div>
-      <p class="point-summary" id="pointDetailsSummary"></p>
-      <span class="point-meta-label">Complete collected data</span>
-      <pre id="pointDetailsData"></pre>
+<section class="stats-panel point-details-panel" id="pointDetailsPanel" hidden>
+  <header class="point-details-header">
+    <h3 id="pointDetailsTitle">{{ selected_stat.name }} Details</h3>
+    <button class="point-details-clear" id="pointDetailsClear" type="button">Clear selection</button>
+  </header>
+  <div class="point-meta" style="margin-top: 16px;">
+    <div class="point-meta-item">
+      <span class="point-meta-label">Target</span>
+      <strong id="pointDetailsTarget"></strong>
     </div>
-  </section>
-</div>
+    <div class="point-meta-item">
+      <span class="point-meta-label">Timestamp</span>
+      <strong id="pointDetailsTimestamp"></strong>
+    </div>
+  </div>
+  <p class="point-summary" id="pointDetailsSummary"></p>
+  <div id="pointMetricDetails"></div>
+</section>
 
 <script>
 (() => {
@@ -98,12 +98,12 @@
   const setupTypeFilter = document.getElementById("setupTypeFilter");
   const targetFilter = document.getElementById("targetFilter");
   const targetFilterLabel = document.getElementById("targetFilterLabel");
-  const pointDetailsModal = document.getElementById("pointDetailsModal");
-  const pointDetailsClose = document.getElementById("pointDetailsClose");
+  const pointDetailsPanel = document.getElementById("pointDetailsPanel");
+  const pointDetailsClear = document.getElementById("pointDetailsClear");
   const pointDetailsTarget = document.getElementById("pointDetailsTarget");
   const pointDetailsTimestamp = document.getElementById("pointDetailsTimestamp");
   const pointDetailsSummary = document.getElementById("pointDetailsSummary");
-  const pointDetailsData = document.getElementById("pointDetailsData");
+  const pointMetricDetails = document.getElementById("pointMetricDetails");
   const datasetConfig = config.datasets || [{
     key: "value", label: config.name, color: "#1769b0", axis: "y"
   }];
@@ -200,21 +200,201 @@
     select.disabled = options.length === 0;
   }
 
+  function createElement(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined && text !== null) element.textContent = String(text);
+    return element;
+  }
+
+  function addDetailCards(items) {
+    const grid = createElement("div", "metric-detail-grid");
+    items.forEach(([label, value]) => {
+      const card = createElement("div", "metric-detail-card");
+      card.appendChild(createElement("span", "point-meta-label", label));
+      card.appendChild(createElement("span", "metric-detail-value", value));
+      grid.appendChild(card);
+    });
+    pointMetricDetails.appendChild(grid);
+  }
+
+  function addDetailTable(headers, rows) {
+    if (!rows.length) return;
+    const table = createElement("table", "metric-detail-table");
+    const headRow = table.createTHead().insertRow();
+    headers.forEach((header) => {
+      headRow.appendChild(createElement("th", "", header));
+    });
+    const body = table.createTBody();
+    rows.forEach((values) => {
+      const row = body.insertRow();
+      values.forEach((value) => {
+        row.appendChild(createElement("td", "", value));
+      });
+    });
+    pointMetricDetails.appendChild(table);
+  }
+
+  function renderAhvDetails(details) {
+    const clusterName = Object.keys(details || {})[0];
+    const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
+    const hosts = [];
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      Object.entries(entry).forEach(([name, partitions]) => {
+        hosts.push({ name, partitions: partitions || {} });
+      });
+    });
+
+    addDetailCards([["Cluster", clusterName || "Unknown"]]);
+    const selectors = createElement("div", "detail-selectors");
+    const hostLabel = createElement("label", "filter-item");
+    hostLabel.appendChild(createElement("span", "filter-label", "AHV Host"));
+    const hostSelect = createElement("select", "filter-select");
+    replaceOptions(
+      hostSelect,
+      "Select AHV Host",
+      hosts.map((host) => ({ key: host.name, label: host.name }))
+    );
+    hostLabel.appendChild(hostSelect);
+
+    const partitionLabel = createElement("label", "filter-item");
+    partitionLabel.appendChild(createElement("span", "filter-label", "Partition"));
+    const partitionSelect = createElement("select", "filter-select");
+    replaceOptions(partitionSelect, "Select Partition", []);
+    partitionLabel.appendChild(partitionSelect);
+    selectors.append(hostLabel, partitionLabel);
+    pointMetricDetails.appendChild(selectors);
+
+    const selectedDetails = createElement("div");
+    pointMetricDetails.appendChild(selectedDetails);
+    pointMetricDetails.appendChild(
+      createElement("p", "detail-help", "Select an AHV host and partition to view its usage details.")
+    );
+
+    hostSelect.addEventListener("change", () => {
+      selectedDetails.replaceChildren();
+      const host = hosts.find((item) => item.name === hostSelect.value);
+      const partitions = host && typeof host.partitions === "object"
+        ? Object.entries(host.partitions)
+            .filter(([, value]) => value && typeof value === "object")
+            .map(([name]) => name)
+        : [];
+      replaceOptions(partitionSelect, "Select Partition", partitions);
+    });
+    partitionSelect.addEventListener("change", () => {
+      selectedDetails.replaceChildren();
+      const host = hosts.find((item) => item.name === hostSelect.value);
+      const partition = host?.partitions?.[partitionSelect.value];
+      if (!partition || typeof partition !== "object") return;
+      const grid = createElement("div", "metric-detail-grid");
+      [
+        ["Host", host.name],
+        ["Partition", partitionSelect.value],
+        ["Total", partition.total || "N/A"],
+        ["Available", partition.available || "N/A"],
+        ["Usage", partition.usage || "N/A"]
+      ].forEach(([label, value]) => {
+        const card = createElement("div", "metric-detail-card");
+        card.appendChild(createElement("span", "point-meta-label", label));
+        card.appendChild(createElement("span", "metric-detail-value", value));
+        grid.appendChild(card);
+      });
+      selectedDetails.appendChild(grid);
+    });
+  }
+
+  function renderVmDetails(details) {
+    const rows = [];
+    Object.entries(details || {}).forEach(([host, values]) => {
+      if (host === "Cluster_name" || !values || typeof values !== "object") return;
+      rows.push([
+        host,
+        Number(values.powered_on || 0),
+        Number(values.powered_off || 0),
+        Number(values.affinity_enabled_count || 0)
+      ]);
+    });
+    addDetailCards([["Cluster", details?.Cluster_name || "Unknown"]]);
+    addDetailTable(["Host / SVM", "Powered On", "Powered Off", "Affinity VMs"], rows);
+  }
+
+  function renderTaskDetails(details) {
+    const counts = details?.counts || {};
+    addDetailCards([
+      ["Total", details?.total || 0],
+      ["Pending", counts.pending || 0],
+      ["Failed", counts.failed || 0]
+    ]);
+    const rows = [];
+    Object.entries(details?.tasks || {}).forEach(([statusName, tasks]) => {
+      if (!Array.isArray(tasks)) return;
+      tasks.forEach((task) => {
+        if (rows.length >= 100) return;
+        if (task && typeof task === "object") {
+          const [taskId, taskDetail] = Object.entries(task)[0] || ["Unknown", ""];
+          rows.push([statusName, taskId, taskDetail]);
+        }
+      });
+    });
+    addDetailTable(["Status", "Task ID", "Detail"], rows);
+    if (rows.length >= 100) {
+      pointMetricDetails.appendChild(
+        createElement("p", "detail-help", "Showing the first 100 task records.")
+      );
+    }
+  }
+
+  function renderPgwDetails(details) {
+    addDetailCards([
+      ["PGW Status", details?.is_online ? "ON" : "OFF"]
+    ]);
+    const rows = Object.entries(details?.status_data || {}).map(([key, value]) => [
+      key.replaceAll("_", " "),
+      value
+    ]);
+    if (details?.error_message) rows.unshift(["Error", details.error_message]);
+    addDetailTable(["Property", "Value"], rows);
+  }
+
+  function renderUtilizationDetails(details) {
+    addDetailCards([
+      ["CPU", `${Number(details?.cpu_usage_percent || 0)}%`],
+      ["Memory", `${Number(details?.memory_usage_percent || 0)}%`],
+      ["IOPS", Number(details?.iops || 0)],
+      ["Underutilized", details?.is_underutilized ? "Yes" : "No"]
+    ]);
+  }
+
+  function renderGenericDetails(details) {
+    const rows = Object.entries(details || {}).map(([key, value]) => [
+      key.replaceAll("_", " "),
+      value && typeof value === "object" ? "See collected metric summary" : value
+    ]);
+    addDetailTable(["Property", "Value"], rows);
+  }
+
   function showPointDetails(item) {
     if (!item) return;
     const date = new Date(item.timestamp);
+    const details = item.details ?? item.data ?? {};
     pointDetailsTarget.textContent = item.ip || "Unknown";
     pointDetailsTimestamp.textContent = date.toLocaleString();
     pointDetailsSummary.textContent = item.summary || "Collected metric details";
-    pointDetailsData.textContent = JSON.stringify(item.details ?? item.data, null, 2);
-    pointDetailsModal.hidden = false;
-    document.body.style.overflow = "hidden";
-    pointDetailsClose.focus();
+    pointMetricDetails.replaceChildren();
+    if (config.parser === "ahv_partition_usage") renderAhvDetails(details);
+    else if (config.parser === "vm_power_states") renderVmDetails(details);
+    else if (config.parser === "task_monitor") renderTaskDetails(details);
+    else if (config.parser === "pgw_status") renderPgwDetails(details);
+    else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
+    else renderGenericDetails(details);
+    pointDetailsPanel.hidden = false;
+    pointDetailsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function closePointDetails() {
-    pointDetailsModal.hidden = true;
-    document.body.style.overflow = "";
+    pointDetailsPanel.hidden = true;
+    pointMetricDetails.replaceChildren();
   }
 
   async function fetchStatsData() {
@@ -341,13 +521,7 @@
     fetchStatsData();
   });
   targetFilter.addEventListener("change", fetchStatsData);
-  pointDetailsClose.addEventListener("click", closePointDetails);
-  pointDetailsModal.addEventListener("click", (event) => {
-    if (event.target === pointDetailsModal) closePointDetails();
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !pointDetailsModal.hidden) closePointDetails();
-  });
+  pointDetailsClear.addEventListener("click", closePointDetails);
 
   document.querySelectorAll(".time-btn").forEach((button) => {
     button.addEventListener("click", () => {
