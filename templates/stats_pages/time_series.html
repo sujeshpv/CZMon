@@ -8,11 +8,21 @@
   .time-options { border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: center; margin-top: 18px; padding-top: 10px; }
   .time-btn { background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 9px 18px; }
   .time-btn.active { background: #1769b0; border-color: #1769b0; color: #fff; }
-  .data-table { border-collapse: collapse; margin-top: 10px; width: 100%; }
-  .data-table th { border-bottom: 2px solid #eee; color: #14589b; padding: 12px; text-align: left; }
-  .data-table td { border-bottom: 1px solid #eee; font-size: 13px; padding: 12px; vertical-align: top; }
   .stats-status { color: #66717d; padding: 18px 12px; text-align: center; }
   .stats-status.error { color: #9d1c1c; }
+  .point-modal-backdrop { align-items: center; background: rgba(20, 31, 43, .55); display: flex; inset: 0; justify-content: center; padding: 24px; position: fixed; z-index: 1000; }
+  .point-modal-backdrop[hidden] { display: none; }
+  .point-modal { background: #fff; border-radius: 8px; box-shadow: 0 18px 50px rgba(0, 0, 0, .28); max-height: 85vh; max-width: 760px; overflow: auto; width: 100%; }
+  .point-modal-header { align-items: center; border-bottom: 1px solid #e1e5e9; display: flex; justify-content: space-between; padding: 18px 22px; }
+  .point-modal-header h3 { color: #14589b; margin: 0; }
+  .point-modal-close { background: transparent; border: 0; color: #52606d; cursor: pointer; font-size: 28px; line-height: 1; padding: 2px 6px; }
+  .point-modal-body { padding: 20px 22px; }
+  .point-meta { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
+  .point-meta-item { background: #f7f9fb; border-radius: 4px; padding: 10px 12px; }
+  .point-meta-label { color: #66717d; display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
+  .point-summary { line-height: 1.5; margin: 0 0 16px; }
+  .point-modal pre { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 4px; max-height: 360px; overflow: auto; padding: 12px; white-space: pre-wrap; }
+  @media (max-width: 640px) { .point-meta { grid-template-columns: 1fr; } }
 </style>
 
 <section class="stats-panel stats-filter-row">
@@ -23,16 +33,16 @@
       {% for az in azs %}<option value="{{ az }}">{{ az }}</option>{% endfor %}
     </select>
   </label>
-  <label class="filter-item" for="setupFilter">
-    <span class="filter-label">Setup</span>
-    <select class="filter-select" id="setupFilter" disabled>
-      <option value="">Select Setup</option>
+  <label class="filter-item" for="setupTypeFilter">
+    <span class="filter-label">Setup Type</span>
+    <select class="filter-select" id="setupTypeFilter">
+      <option value="">Select Setup Type</option>
     </select>
   </label>
-  <label class="filter-item" for="hostFilter">
-    <span class="filter-label">SVM / Host</span>
-    <select class="filter-select" id="hostFilter" disabled>
-      <option value="">Select SVM/Host</option>
+  <label class="filter-item" for="targetFilter">
+    <span class="filter-label" id="targetFilterLabel">Target</span>
+    <select class="filter-select" id="targetFilter" disabled>
+      <option value="">Select Target</option>
     </select>
   </label>
 </section>
@@ -40,6 +50,7 @@
 <section class="stats-panel">
   <div class="chart-title">{{ selected_stat.name }}</div>
   <div class="chart-frame"><canvas id="statsChart"></canvas></div>
+  <div class="stats-status" id="statsStatus">Loading data…</div>
   <div class="time-options">
     <button class="time-btn" data-range="1h" type="button">1 Hour</button>
     <button class="time-btn" data-range="6h" type="button">6 Hours</button>
@@ -50,16 +61,29 @@
   </div>
 </section>
 
-<section class="stats-panel">
-  <h3>{{ selected_stat.name }} Details</h3>
-  <div class="stats-status" id="statsStatus">Loading data…</div>
-  <table class="data-table" id="statsDataTable" hidden>
-    <thead>
-      <tr><th>Timestamp</th><th>Cluster Target</th><th>Summary of Result</th></tr>
-    </thead>
-    <tbody id="statsTableBody"></tbody>
-  </table>
-</section>
+<div class="point-modal-backdrop" id="pointDetailsModal" hidden>
+  <section aria-labelledby="pointDetailsTitle" aria-modal="true" class="point-modal" role="dialog">
+    <header class="point-modal-header">
+      <h3 id="pointDetailsTitle">{{ selected_stat.name }} Details</h3>
+      <button aria-label="Close details" class="point-modal-close" id="pointDetailsClose" type="button">&times;</button>
+    </header>
+    <div class="point-modal-body">
+      <div class="point-meta">
+        <div class="point-meta-item">
+          <span class="point-meta-label">Target</span>
+          <strong id="pointDetailsTarget"></strong>
+        </div>
+        <div class="point-meta-item">
+          <span class="point-meta-label">Timestamp</span>
+          <strong id="pointDetailsTimestamp"></strong>
+        </div>
+      </div>
+      <p class="point-summary" id="pointDetailsSummary"></p>
+      <span class="point-meta-label">Complete collected data</span>
+      <pre id="pointDetailsData"></pre>
+    </div>
+  </section>
+</div>
 
 <script>
 (() => {
@@ -68,40 +92,100 @@
   const config = JSON.parse(document.getElementById("selected-stat-config").textContent);
   const azToPcs = JSON.parse(document.getElementById("stats-az-to-pcs").textContent);
   const pcToPes = JSON.parse(document.getElementById("stats-pc-to-pes").textContent);
+  const targetNames = JSON.parse(document.getElementById("stats-target-names").textContent);
   const status = document.getElementById("statsStatus");
-  const table = document.getElementById("statsDataTable");
-  const tableBody = document.getElementById("statsTableBody");
   const azFilter = document.getElementById("azFilter");
-  const setupFilter = document.getElementById("setupFilter");
-  const hostFilter = document.getElementById("hostFilter");
+  const setupTypeFilter = document.getElementById("setupTypeFilter");
+  const targetFilter = document.getElementById("targetFilter");
+  const targetFilterLabel = document.getElementById("targetFilterLabel");
+  const pointDetailsModal = document.getElementById("pointDetailsModal");
+  const pointDetailsClose = document.getElementById("pointDetailsClose");
+  const pointDetailsTarget = document.getElementById("pointDetailsTarget");
+  const pointDetailsTimestamp = document.getElementById("pointDetailsTimestamp");
+  const pointDetailsSummary = document.getElementById("pointDetailsSummary");
+  const pointDetailsData = document.getElementById("pointDetailsData");
+  const datasetConfig = config.datasets || [{
+    key: "value", label: config.name, color: "#1769b0", axis: "y"
+  }];
   let currentRange = "90d";
+  let pointRecords = [];
+
+  function chartScales() {
+    const scales = {
+      x: {
+        stacked: Boolean(config.stacked),
+        ticks: { maxRotation: 45, minRotation: 45 }
+      },
+      y: {
+        beginAtZero: true,
+        max: config.status_axis ? 1 : (config.is_percentage ? 100 : undefined),
+        stacked: Boolean(config.stacked),
+        title: { display: true, text: config.y_axis || "Value" }
+      }
+    };
+    if (config.status_axis) {
+      scales.y.ticks = {
+        stepSize: 1,
+        callback: (value) => Number(value) === 1 ? "ON" : "OFF"
+      };
+    }
+    if (datasetConfig.some((item) => item.axis === "y1")) {
+      scales.y1 = {
+        beginAtZero: true,
+        position: "right",
+        grid: { drawOnChartArea: false },
+        title: { display: true, text: "IOPS" }
+      };
+    }
+    return scales;
+  }
 
   const chart = new Chart(document.getElementById("statsChart"), {
     type: config.chart_type || "line",
-    data: {
-      labels: [],
-      datasets: [{
-        label: config.name,
+    data: { labels: [], datasets: datasetConfig.map((item) => ({
+        label: item.label,
         data: [],
-        borderColor: "#1769b0",
-        backgroundColor: "rgba(23, 105, 176, .10)",
+        borderColor: item.color,
+        backgroundColor: item.color,
         borderWidth: 3,
-        fill: true,
-        pointRadius: 3,
-        tension: .15
-      }]
-    },
+        fill: false,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        tension: .15,
+        stepped: Boolean(item.stepped),
+        yAxisID: item.axis || "y",
+        spanGaps: true
+      })) },
     options: {
       maintainAspectRatio: false,
       responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { maxRotation: 45, minRotation: 45 } },
-        y: {
-          beginAtZero: true,
-          max: config.is_percentage ? 100 : undefined,
-          title: { display: true, text: config.y_axis || "Value" }
+      interaction: { intersect: true, mode: "nearest" },
+      plugins: {
+        legend: {
+          display: datasetConfig.length > 1,
+          labels: {
+            filter(item, data) {
+              return !config.hide_empty_datasets || !data.datasets[item.datasetIndex].hidden;
+            }
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              if (config.status_axis) {
+                return `${context.dataset.label}: ${Number(context.raw) === 1 ? "ON" : "OFF"}`;
+              }
+              return `${context.dataset.label}: ${context.formattedValue}`;
+            }
+          }
         }
+      },
+      scales: chartScales(),
+      onClick(event) {
+        const selected = chart.getElementsAtEventForMode(
+          event, "nearest", { intersect: true }, true
+        );
+        if (selected.length) showPointDetails(pointRecords[selected[0].index]);
       }
     }
   });
@@ -116,72 +200,32 @@
     select.disabled = options.length === 0;
   }
 
-  function summarize(payload) {
-    try {
-      if (config.parser === "ahv_partition_usage") {
-        const clusterName = Object.keys(payload)[0];
-        const hosts = payload[clusterName] || [];
-        const firstHostData = hosts.find((item) => item && typeof item === "object") || {};
-        const firstHost = Object.keys(firstHostData)[0] || "Unknown";
-        const usage = parseFloat(String(firstHostData[firstHost]?.["/"]?.usage || "0").replace("%", ""));
-        return { value: usage, text: `Cluster ${clusterName}: root usage is ${usage}% on ${firstHost}; ${hosts.length} host(s) captured.` };
-      }
-      if (config.parser === "vm_power_states") {
-        let poweredOn = 0;
-        let poweredOff = 0;
-        Object.entries(payload).forEach(([key, value]) => {
-          if (key !== "Cluster_name" && value && typeof value === "object") {
-            poweredOn += Number(value.powered_on || 0);
-            poweredOff += Number(value.powered_off || 0);
-          }
-        });
-        return { value: poweredOn, text: `${payload.Cluster_name || "Cluster"}: ${poweredOn} VMs on and ${poweredOff} VMs off.` };
-      }
-      if (config.parser === "cluster_utilization") {
-        const cpu = Number(payload.cpu_usage_percent || 0);
-        return { value: cpu, text: `CPU: ${cpu}% | Memory: ${Number(payload.memory_usage_percent || 0)}% | IOPS: ${Number(payload.iops || 0)}` };
-      }
-      if (config.parser === "pgw_status") {
-        const online = payload.is_online ? 1 : 0;
-        return { value: online, text: `Prism Gateway is ${online ? "ONLINE" : "OFFLINE"}.` };
-      }
-      if (config.parser === "task_monitor") {
-        const failed = Array.isArray(payload.Failed) ? payload.Failed.length : 0;
-        const pending = Array.isArray(payload.Pending) ? payload.Pending.length : 0;
-        return { value: failed + pending, text: `${failed} failed task(s), ${pending} pending task(s).` };
-      }
-      const value = Array.isArray(payload) ? payload.length : Object.keys(payload || {}).length;
-      return { value, text: `Captured ${value} record(s).` };
-    } catch (error) {
-      console.error("Unable to summarize stats payload", error);
-      return { value: 0, text: "The record was captured but could not be summarized." };
-    }
+  function showPointDetails(item) {
+    if (!item) return;
+    const date = new Date(item.timestamp);
+    pointDetailsTarget.textContent = item.ip || "Unknown";
+    pointDetailsTimestamp.textContent = date.toLocaleString();
+    pointDetailsSummary.textContent = item.summary || "Collected metric details";
+    pointDetailsData.textContent = JSON.stringify(item.details ?? item.data, null, 2);
+    pointDetailsModal.hidden = false;
+    document.body.style.overflow = "hidden";
+    pointDetailsClose.focus();
   }
 
-  function appendTableRow(item, summary) {
-    const row = tableBody.insertRow();
-    [item.timestamp, item.ip, summary].forEach((value, index) => {
-      const cell = row.insertCell();
-      cell.textContent = value == null ? "" : String(value);
-      if (index === 1) {
-        const content = cell.textContent;
-        cell.textContent = "";
-        const strong = document.createElement("strong");
-        strong.textContent = content;
-        cell.appendChild(strong);
-      }
-    });
+  function closePointDetails() {
+    pointDetailsModal.hidden = true;
+    document.body.style.overflow = "";
   }
 
   async function fetchStatsData() {
     status.hidden = false;
     status.classList.remove("error");
     status.textContent = "Loading data…";
-    table.hidden = true;
 
-    const target = hostFilter.value || setupFilter.value;
+    const target = targetFilter.value;
     const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
     if (target) params.set("target", target);
+    if (setupTypeFilter.value) params.set("endpoint_type", setupTypeFilter.value);
 
     try {
       const response = await fetch("{% url 'stats_data_api' %}?" + params.toString());
@@ -196,29 +240,39 @@
         return true;
       });
       const labels = [];
-      const values = [];
-      tableBody.replaceChildren();
+      closePointDetails();
 
       series.forEach((item) => {
-        const result = summarize(item.data);
         const date = new Date(item.timestamp);
         labels.push(currentRange.endsWith("h")
           ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
           : date.toLocaleDateString([], { month: "short", day: "numeric" }));
-        values.push(result.value);
-        appendTableRow(item, result.text);
       });
 
+      pointRecords = series;
       chart.data.labels = labels;
-      chart.data.datasets[0].data = values;
-      chart.options.scales.y.suggestedMax = config.is_percentage
-        ? undefined
-        : Math.max(...values, 5);
+      chart.data.datasets.forEach((dataset, index) => {
+        const key = datasetConfig[index].key;
+        dataset.data = series.map((item) =>
+          Object.prototype.hasOwnProperty.call(item.values || {}, key)
+            ? item.values[key]
+            : null
+        );
+      });
+      const hasNonZeroData = chart.data.datasets.some((dataset) =>
+        dataset.data.some((value) => Number(value) !== 0)
+      );
+      chart.data.datasets.forEach((dataset) => {
+        dataset.hidden = Boolean(
+          config.hide_empty_datasets
+          && hasNonZeroData
+          && !dataset.data.some((value) => Number(value) !== 0)
+        );
+      });
       chart.update();
 
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
-      table.hidden = series.length === 0;
     } catch (error) {
       status.hidden = false;
       status.classList.add("error");
@@ -226,17 +280,74 @@
     }
   }
 
-  azFilter.addEventListener("change", () => {
-    replaceOptions(setupFilter, "Select Setup", azToPcs[azFilter.value] || []);
-    replaceOptions(hostFilter, "Select SVM/Host", []);
-    fetchStatsData();
-  });
+  function targetLabel() {
+    return (config.target_labels || {})[setupTypeFilter.value] || "Target";
+  }
 
-  setupFilter.addEventListener("change", () => {
-    replaceOptions(hostFilter, "Select SVM/Host", pcToPes[setupFilter.value] || []);
+  function formatTargetOption(item, endpointType) {
+    const value = typeof item === "string" ? item : item.key;
+    const originalLabel = typeof item === "string" ? item : item.label;
+    const ipMatch = String(`${value} ${originalLabel}`).match(
+      /\b(?:\d{1,3}\.){3}\d{1,3}\b/
+    );
+    const ip = ipMatch ? ipMatch[0] : String(value);
+    const name = targetNames[ip];
+    return {
+      key: ip,
+      label: name ? `${endpointType}: ${name} (${ip})` : `${endpointType}: ${ip}`
+    };
+  }
+
+  function refreshTargets() {
+    const type = setupTypeFilter.value;
+    const pcs = azToPcs[azFilter.value] || [];
+    let options = [];
+    if (type === "PC") {
+      options = pcs.map((pc) => formatTargetOption(pc, "PC"));
+    } else if (type === "PE") {
+      const seen = new Set();
+      pcs.forEach((pc) => {
+        (pcToPes[pc.key] || []).forEach((pe) => {
+          const value = typeof pe === "string" ? pe : pe.key;
+          if (!seen.has(value)) {
+            seen.add(value);
+            options.push(formatTargetOption(pe, "PE"));
+          }
+        });
+      });
+    }
+    const label = targetLabel();
+    targetFilterLabel.textContent = label;
+    replaceOptions(targetFilter, `Select ${label}`, options);
+  }
+
+  const supportedTypes = config.endpoint_types || ["PC", "PE"];
+  replaceOptions(
+    setupTypeFilter,
+    "Select Setup Type",
+    supportedTypes.map((type) => ({ key: type, label: type }))
+  );
+  if (supportedTypes.length === 1) {
+    setupTypeFilter.value = supportedTypes[0];
+    setupTypeFilter.disabled = true;
+  }
+
+  azFilter.addEventListener("change", () => {
+    refreshTargets();
     fetchStatsData();
   });
-  hostFilter.addEventListener("change", fetchStatsData);
+  setupTypeFilter.addEventListener("change", () => {
+    refreshTargets();
+    fetchStatsData();
+  });
+  targetFilter.addEventListener("change", fetchStatsData);
+  pointDetailsClose.addEventListener("click", closePointDetails);
+  pointDetailsModal.addEventListener("click", (event) => {
+    if (event.target === pointDetailsModal) closePointDetails();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !pointDetailsModal.hidden) closePointDetails();
+  });
 
   document.querySelectorAll(".time-btn").forEach((button) => {
     button.addEventListener("click", () => {

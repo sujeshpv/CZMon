@@ -49,7 +49,7 @@ def check_cluster_utilization(
 
     # ppm is parts per million. Divide by 10,000 to get percentage.
     cpu_ppm = float(stats.get("hypervisor_cpu_usage_ppm", 0))
-    mem_ppm = float(stats.get("memory_usage_ppm", 0))
+    mem_ppm = float(stats.get("hypervisor_memory_usage_ppm", 0))
 
     cpu_pct = round(cpu_ppm / 10000.0, 2)
     mem_pct = round(mem_ppm / 10000.0, 2)

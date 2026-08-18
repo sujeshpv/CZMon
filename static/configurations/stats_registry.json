@@ -7,7 +7,12 @@
     "parser": "ahv_partition_usage",
     "chart_type": "line",
     "y_axis": "Usage %",
-    "is_percentage": true
+    "is_percentage": true,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "usage", "label": "Partition Usage", "color": "#1769b0", "axis": "y"}
+    ]
   },
   "pgw_status": {
     "name": "PGW Status",
@@ -16,8 +21,14 @@
     "page": "stats_pages/time_series.html",
     "parser": "pgw_status",
     "chart_type": "line",
-    "y_axis": "Nodes",
-    "is_percentage": false
+    "y_axis": "PGW Status",
+    "is_percentage": false,
+    "status_axis": true,
+    "endpoint_types": ["PC", "PE"],
+    "target_labels": {"PC": "PC", "PE": "PE"},
+    "datasets": [
+      {"key": "status", "label": "PGW Status", "color": "#1769b0", "axis": "y", "stepped": true}
+    ]
   },
   "vm_power_states": {
     "name": "VM Power States",
@@ -27,26 +38,50 @@
     "parser": "vm_power_states",
     "chart_type": "line",
     "y_axis": "VMs",
-    "is_percentage": false
+    "is_percentage": false,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "powered_on", "label": "Powered On", "color": "#218838", "axis": "y"},
+      {"key": "powered_off", "label": "Powered Off", "color": "#c82333", "axis": "y"},
+      {"key": "affinity", "label": "Affinity VMs", "color": "#6f42c1", "axis": "y"}
+    ]
   },
   "task_monitor": {
     "name": "Task Monitor",
     "table_name": "task_monitor",
-    "summary": "Monitoring of failed and long-running Acropolis tasks.",
+    "summary": "Completed, running, pending, queued, and failed Prism Central tasks.",
     "page": "stats_pages/time_series.html",
     "parser": "task_monitor",
     "chart_type": "line",
     "y_axis": "Tasks",
-    "is_percentage": false
+    "is_percentage": false,
+    "hide_empty_datasets": true,
+    "endpoint_types": ["PC"],
+    "target_labels": {"PC": "PC"},
+    "datasets": [
+      {"key": "completed", "label": "Completed", "color": "#218838", "axis": "y"},
+      {"key": "running", "label": "Running", "color": "#1769b0", "axis": "y"},
+      {"key": "pending", "label": "Pending", "color": "#fd7e14", "axis": "y"},
+      {"key": "queued", "label": "Queued", "color": "#6f42c1", "axis": "y"},
+      {"key": "failed", "label": "Failed", "color": "#c82333", "axis": "y"}
+    ]
   },
   "underutilized_cluster": {
     "name": "Underutilized Cluster",
     "table_name": "check_underutilized_cluster",
-    "summary": "CPU and memory usage data for cluster optimization.",
+    "summary": "CPU, memory, and IOPS data for cluster optimization.",
     "page": "stats_pages/time_series.html",
     "parser": "cluster_utilization",
     "chart_type": "line",
     "y_axis": "Usage %",
-    "is_percentage": true
+    "is_percentage": true,
+    "endpoint_types": ["PC", "PE"],
+    "target_labels": {"PC": "Cluster", "PE": "Cluster"},
+    "datasets": [
+      {"key": "cpu", "label": "CPU %", "color": "#1769b0", "axis": "y"},
+      {"key": "memory", "label": "Memory %", "color": "#218838", "axis": "y"},
+      {"key": "iops", "label": "IOPS", "color": "#fd7e14", "axis": "y1"}
+    ]
   }
 }
