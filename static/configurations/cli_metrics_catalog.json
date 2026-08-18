@@ -3,6 +3,12 @@
     "description": "List of commands to be executed on the cluster",
     "command": ["df -h"],
     "endpoint_type": "PC"
-  }
+  },
 
+  "cassandra_node_consistency": {
+    "description": "Runs nodetool ring to verify Cassandra consistency",
+    "command": ["nodetool -h 0 ring"],
+    "endpoint_type": "PE"
+  }
 }
+
