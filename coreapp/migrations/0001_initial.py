@@ -5,70 +5,70 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
 
-    initial = True
+  initial = True
 
-    dependencies = [
-    ]
+  dependencies = [
+  ]
 
-    operations = [
-        migrations.CreateModel(
-            name='AHVHomeUsage',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('cluster_name', models.CharField(max_length=255)),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now=True)),
-            ],
-            options={
-                'db_table': 'coreapp_ahvhomeusage',
-            },
-        ),
-        migrations.CreateModel(
-            name='PrismGatewayStatus',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('ip_address', models.GenericIPAddressField(unique=True)),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now=True)),
-            ],
-            options={
-                'db_table': 'coreapp_prismgatewaystatus',
-            },
-        ),
-        migrations.CreateModel(
-            name='TaskMonitor',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('ip_address', models.GenericIPAddressField()),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-            ],
-            options={
-                'db_table': 'coreapp_taskmonitor',
-            },
-        ),
-        migrations.CreateModel(
-            name='UnderutilizedCluster',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('ip_address', models.GenericIPAddressField()),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-            ],
-            options={
-                'db_table': 'coreapp_underutilizedcluster',
-            },
-        ),
-        migrations.CreateModel(
-            name='VMPowerStates',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('ip_address', models.GenericIPAddressField()),
-                ('status_data', models.JSONField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-            ],
-            options={
-                'db_table': 'coreapp_vmpowerstates',
-            },
-        ),
-    ]
+  operations = [
+    migrations.CreateModel(
+      name='AHVHomeUsage',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('cluster_name', models.CharField(max_length=255)),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('created_at', models.DateTimeField(auto_now=True)),
+      ],
+      options={
+        'db_table': 'coreapp_ahvhomeusage',
+      },
+    ),
+    migrations.CreateModel(
+      name='PrismGatewayStatus',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('ip_address', models.GenericIPAddressField(unique=True)),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('created_at', models.DateTimeField(auto_now=True)),
+      ],
+      options={
+        'db_table': 'coreapp_prismgatewaystatus',
+      },
+    ),
+    migrations.CreateModel(
+      name='TaskMonitor',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('ip_address', models.GenericIPAddressField()),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('created_at', models.DateTimeField(auto_now_add=True)),
+      ],
+      options={
+        'db_table': 'coreapp_taskmonitor',
+      },
+    ),
+    migrations.CreateModel(
+      name='UnderutilizedCluster',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('ip_address', models.GenericIPAddressField()),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('created_at', models.DateTimeField(auto_now_add=True)),
+      ],
+      options={
+        'db_table': 'coreapp_underutilizedcluster',
+      },
+    ),
+    migrations.CreateModel(
+      name='VMPowerStates',
+      fields=[
+        ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+        ('ip_address', models.GenericIPAddressField()),
+        ('status_data', models.JSONField(blank=True, null=True)),
+        ('created_at', models.DateTimeField(auto_now_add=True)),
+      ],
+      options={
+        'db_table': 'coreapp_vmpowerstates',
+      },
+    ),
+  ]
