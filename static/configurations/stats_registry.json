@@ -80,5 +80,22 @@
       {"key": "memory", "label": "Memory %", "color": "#218838", "axis": "y"},
       {"key": "iops", "label": "IOPS", "color": "#fd7e14", "axis": "y1"}
     ]
+  },
+
+  "recovery_point_usage": {
+    "name": "Recovery Point Usage",
+    "table_name": "snapshot_usage_tracker",
+    "summary": "Trace of recovery points usage on the cluster over the past 60 days.",
+    "page": "stats_pages/time_series.html",
+    "parser": "snapshot_usage",
+    "chart_type": "line",
+    "y_axis": "Usage (%)",
+    "is_percentage": true,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "recovery_point_usage", "label": "Snapshot Usage", "color": "#1769b0", "axis": "y"}
+    ]
   }
+
 }
