@@ -1,0 +1,537 @@
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+  .stats-filter-row { display: flex; gap: 28px; align-items: end; flex-wrap: wrap; }
+  .stats-filter-row .filter-select { min-width: 190px; }
+  .chart-title { color: #444; font-size: 18px; font-weight: 700; margin-bottom: 24px; text-align: center; }
+  .chart-frame { height: 350px; position: relative; }
+  .time-options { border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: center; margin-top: 18px; padding-top: 10px; }
+  .time-btn { background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 9px 18px; }
+  .time-btn.active { background: #1769b0; border-color: #1769b0; color: #fff; }
+  .stats-status { color: #66717d; padding: 18px 12px; text-align: center; }
+  .stats-status.error { color: #9d1c1c; }
+  .point-details-panel[hidden] { display: none; }
+  .point-details-header { align-items: center; display: flex; justify-content: space-between; }
+  .point-details-header h3 { color: #14589b; margin: 0; }
+  .point-details-clear { background: #fff; border: 1px solid #b9c2cc; border-radius: 4px; color: #45515d; cursor: pointer; padding: 7px 12px; }
+  .point-meta { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; }
+  .point-meta-item { background: #f7f9fb; border-radius: 4px; padding: 10px 12px; }
+  .point-meta-label { color: #66717d; display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
+  .point-summary { line-height: 1.5; margin: 16px 0; }
+  .metric-detail-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 14px 0; }
+  .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; padding: 14px; }
+  .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; }
+  .metric-detail-table { border-collapse: collapse; margin-top: 14px; width: 100%; }
+  .metric-detail-table th { background: #f4f7fa; color: #14589b; font-size: 13px; text-align: left; }
+  .metric-detail-table th, .metric-detail-table td { border: 1px solid #e1e5e9; padding: 9px 11px; vertical-align: top; }
+  .metric-detail-table td { font-size: 13px; }
+  .detail-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
+  .detail-selectors .filter-select { min-width: 220px; }
+  .detail-help { color: #66717d; margin: 14px 0 0; }
+  @media (max-width: 640px) { .point-meta { grid-template-columns: 1fr; } }
+</style>
+
+<section class="stats-panel stats-filter-row">
+  <label class="filter-item" for="azFilter">
+    <span class="filter-label">AZ</span>
+    <select class="filter-select" id="azFilter">
+      <option value="">Select AZ</option>
+      {% for az in azs %}<option value="{{ az }}">{{ az }}</option>{% endfor %}
+    </select>
+  </label>
+  <label class="filter-item" for="setupTypeFilter">
+    <span class="filter-label">Setup Type</span>
+    <select class="filter-select" id="setupTypeFilter">
+      <option value="">Select Setup Type</option>
+    </select>
+  </label>
+  <label class="filter-item" for="targetFilter">
+    <span class="filter-label" id="targetFilterLabel">Target</span>
+    <select class="filter-select" id="targetFilter" disabled>
+      <option value="">Select Target</option>
+    </select>
+  </label>
+</section>
+
+<section class="stats-panel">
+  <div class="chart-title">{{ selected_stat.name }}</div>
+  <div class="chart-frame"><canvas id="statsChart"></canvas></div>
+  <div class="stats-status" id="statsStatus">Loading data…</div>
+  <div class="time-options">
+    <button class="time-btn" data-range="12h" type="button">12 Hours</button>
+    <button class="time-btn" data-range="24h" type="button">24 Hours</button>
+    <button class="time-btn" data-range="7d" type="button">7 Days</button>
+    <button class="time-btn" data-range="30d" type="button">30 Days</button>
+    <button class="time-btn active" data-range="90d" type="button">90 Days</button>
+  </div>
+</section>
+
+<section class="stats-panel point-details-panel" id="pointDetailsPanel" hidden>
+  <header class="point-details-header">
+    <h3 id="pointDetailsTitle">{{ selected_stat.name }} Details</h3>
+    <button class="point-details-clear" id="pointDetailsClear" type="button">Clear selection</button>
+  </header>
+  <div class="point-meta" style="margin-top: 16px;">
+    <div class="point-meta-item">
+      <span class="point-meta-label">Target</span>
+      <strong id="pointDetailsTarget"></strong>
+    </div>
+    <div class="point-meta-item">
+      <span class="point-meta-label">Timestamp</span>
+      <strong id="pointDetailsTimestamp"></strong>
+    </div>
+  </div>
+  <p class="point-summary" id="pointDetailsSummary"></p>
+  <div id="pointMetricDetails"></div>
+</section>
+
+<script>
+(() => {
+  "use strict";
+
+  const config = JSON.parse(document.getElementById("selected-stat-config").textContent);
+  const azToPcs = JSON.parse(document.getElementById("stats-az-to-pcs").textContent);
+  const pcToPes = JSON.parse(document.getElementById("stats-pc-to-pes").textContent);
+  const targetNames = JSON.parse(document.getElementById("stats-target-names").textContent);
+  const status = document.getElementById("statsStatus");
+  const azFilter = document.getElementById("azFilter");
+  const setupTypeFilter = document.getElementById("setupTypeFilter");
+  const targetFilter = document.getElementById("targetFilter");
+  const targetFilterLabel = document.getElementById("targetFilterLabel");
+  const pointDetailsPanel = document.getElementById("pointDetailsPanel");
+  const pointDetailsClear = document.getElementById("pointDetailsClear");
+  const pointDetailsTarget = document.getElementById("pointDetailsTarget");
+  const pointDetailsTimestamp = document.getElementById("pointDetailsTimestamp");
+  const pointDetailsSummary = document.getElementById("pointDetailsSummary");
+  const pointMetricDetails = document.getElementById("pointMetricDetails");
+  const datasetConfig = config.datasets || [{
+    key: "value", label: config.name, color: "#1769b0", axis: "y"
+  }];
+  let currentRange = "90d";
+  let pointRecords = [];
+
+  function chartScales() {
+    const scales = {
+      x: {
+        stacked: Boolean(config.stacked),
+        ticks: { maxRotation: 45, minRotation: 45 }
+      },
+      y: {
+        beginAtZero: true,
+        max: config.status_axis ? 1 : (config.is_percentage ? 100 : undefined),
+        stacked: Boolean(config.stacked),
+        title: { display: true, text: config.y_axis || "Value" }
+      }
+    };
+    if (config.status_axis) {
+      scales.y.ticks = {
+        stepSize: 1,
+        callback: (value) => Number(value) === 1 ? "ON" : "OFF"
+      };
+    }
+    if (datasetConfig.some((item) => item.axis === "y1")) {
+      scales.y1 = {
+        beginAtZero: true,
+        position: "right",
+        grid: { drawOnChartArea: false },
+        title: { display: true, text: "IOPS" }
+      };
+    }
+    return scales;
+  }
+
+  const chart = new Chart(document.getElementById("statsChart"), {
+    type: config.chart_type || "line",
+    data: { labels: [], datasets: datasetConfig.map((item) => ({
+        label: item.label,
+        data: [],
+        borderColor: item.color,
+        backgroundColor: item.color,
+        borderWidth: 3,
+        fill: false,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        tension: .15,
+        stepped: Boolean(item.stepped),
+        yAxisID: item.axis || "y",
+        spanGaps: true
+      })) },
+    options: {
+      maintainAspectRatio: false,
+      responsive: true,
+      interaction: { intersect: true, mode: "nearest" },
+      plugins: {
+        legend: {
+          display: datasetConfig.length > 1,
+          labels: {
+            filter(item, data) {
+              return !config.hide_empty_datasets || !data.datasets[item.datasetIndex].hidden;
+            }
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              if (config.status_axis) {
+                return `${context.dataset.label}: ${Number(context.raw) === 1 ? "ON" : "OFF"}`;
+              }
+              return `${context.dataset.label}: ${context.formattedValue}`;
+            }
+          }
+        }
+      },
+      scales: chartScales(),
+      onClick(event) {
+        const selected = chart.getElementsAtEventForMode(
+          event, "nearest", { intersect: true }, true
+        );
+        if (selected.length) showPointDetails(pointRecords[selected[0].index]);
+      }
+    }
+  });
+
+  function replaceOptions(select, placeholder, options) {
+    select.replaceChildren(new Option(placeholder, ""));
+    options.forEach((item) => {
+      const value = typeof item === "string" ? item : item.key;
+      const label = typeof item === "string" ? item : item.label;
+      select.add(new Option(label, value));
+    });
+    select.disabled = options.length === 0;
+  }
+
+  function createElement(tag, className, text) {
+    const element = document.createElement(tag);
+    if (className) element.className = className;
+    if (text !== undefined && text !== null) element.textContent = String(text);
+    return element;
+  }
+
+  function addDetailCards(items) {
+    const grid = createElement("div", "metric-detail-grid");
+    items.forEach(([label, value]) => {
+      const card = createElement("div", "metric-detail-card");
+      card.appendChild(createElement("span", "point-meta-label", label));
+      card.appendChild(createElement("span", "metric-detail-value", value));
+      grid.appendChild(card);
+    });
+    pointMetricDetails.appendChild(grid);
+  }
+
+  function addDetailTable(headers, rows) {
+    if (!rows.length) return;
+    const table = createElement("table", "metric-detail-table");
+    const headRow = table.createTHead().insertRow();
+    headers.forEach((header) => {
+      headRow.appendChild(createElement("th", "", header));
+    });
+    const body = table.createTBody();
+    rows.forEach((values) => {
+      const row = body.insertRow();
+      values.forEach((value) => {
+        row.appendChild(createElement("td", "", value));
+      });
+    });
+    pointMetricDetails.appendChild(table);
+  }
+
+  function renderAhvDetails(details) {
+    const clusterName = Object.keys(details || {})[0];
+    const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
+    const hosts = [];
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      Object.entries(entry).forEach(([name, partitions]) => {
+        hosts.push({ name, partitions: partitions || {} });
+      });
+    });
+
+    addDetailCards([["Cluster", clusterName || "Unknown"]]);
+    const selectors = createElement("div", "detail-selectors");
+    const hostLabel = createElement("label", "filter-item");
+    hostLabel.appendChild(createElement("span", "filter-label", "AHV Host"));
+    const hostSelect = createElement("select", "filter-select");
+    replaceOptions(
+      hostSelect,
+      "Select AHV Host",
+      hosts.map((host) => ({ key: host.name, label: host.name }))
+    );
+    hostLabel.appendChild(hostSelect);
+
+    const partitionLabel = createElement("label", "filter-item");
+    partitionLabel.appendChild(createElement("span", "filter-label", "Partition"));
+    const partitionSelect = createElement("select", "filter-select");
+    replaceOptions(partitionSelect, "Select Partition", []);
+    partitionLabel.appendChild(partitionSelect);
+    selectors.append(hostLabel, partitionLabel);
+    pointMetricDetails.appendChild(selectors);
+
+    const selectedDetails = createElement("div");
+    pointMetricDetails.appendChild(selectedDetails);
+    pointMetricDetails.appendChild(
+      createElement("p", "detail-help", "Select an AHV host and partition to view its usage details.")
+    );
+
+    hostSelect.addEventListener("change", () => {
+      selectedDetails.replaceChildren();
+      const host = hosts.find((item) => item.name === hostSelect.value);
+      const partitions = host && typeof host.partitions === "object"
+        ? Object.entries(host.partitions)
+            .filter(([, value]) => value && typeof value === "object")
+            .map(([name]) => name)
+        : [];
+      replaceOptions(partitionSelect, "Select Partition", partitions);
+    });
+    partitionSelect.addEventListener("change", () => {
+      selectedDetails.replaceChildren();
+      const host = hosts.find((item) => item.name === hostSelect.value);
+      const partition = host?.partitions?.[partitionSelect.value];
+      if (!partition || typeof partition !== "object") return;
+      const grid = createElement("div", "metric-detail-grid");
+      [
+        ["Host", host.name],
+        ["Partition", partitionSelect.value],
+        ["Total", partition.total || "N/A"],
+        ["Available", partition.available || "N/A"],
+        ["Usage", partition.usage || "N/A"]
+      ].forEach(([label, value]) => {
+        const card = createElement("div", "metric-detail-card");
+        card.appendChild(createElement("span", "point-meta-label", label));
+        card.appendChild(createElement("span", "metric-detail-value", value));
+        grid.appendChild(card);
+      });
+      selectedDetails.appendChild(grid);
+    });
+  }
+
+  function renderVmDetails(details) {
+    const rows = [];
+    Object.entries(details || {}).forEach(([host, values]) => {
+      if (host === "Cluster_name" || !values || typeof values !== "object") return;
+      rows.push([
+        host,
+        Number(values.powered_on || 0),
+        Number(values.powered_off || 0),
+        Number(values.affinity_enabled_count || 0)
+      ]);
+    });
+    addDetailCards([["Cluster", details?.Cluster_name || "Unknown"]]);
+    addDetailTable(["Host / SVM", "Powered On", "Powered Off", "Affinity VMs"], rows);
+  }
+
+  function renderTaskDetails(details) {
+    const counts = details?.counts || {};
+    addDetailCards([
+      ["Total", details?.total || 0],
+      ["Pending", counts.pending || 0],
+      ["Failed", counts.failed || 0]
+    ]);
+    const rows = [];
+    Object.entries(details?.tasks || {}).forEach(([statusName, tasks]) => {
+      if (!Array.isArray(tasks)) return;
+      tasks.forEach((task) => {
+        if (rows.length >= 100) return;
+        if (task && typeof task === "object") {
+          const [taskId, taskDetail] = Object.entries(task)[0] || ["Unknown", ""];
+          rows.push([statusName, taskId, taskDetail]);
+        }
+      });
+    });
+    addDetailTable(["Status", "Task ID", "Detail"], rows);
+    if (rows.length >= 100) {
+      pointMetricDetails.appendChild(
+        createElement("p", "detail-help", "Showing the first 100 task records.")
+      );
+    }
+  }
+
+  function renderPgwDetails(details) {
+    addDetailCards([
+      ["PGW Status", details?.is_online ? "ON" : "OFF"]
+    ]);
+    const rows = Object.entries(details?.status_data || {}).map(([key, value]) => [
+      key.replaceAll("_", " "),
+      value
+    ]);
+    if (details?.error_message) rows.unshift(["Error", details.error_message]);
+    addDetailTable(["Property", "Value"], rows);
+  }
+
+  function renderUtilizationDetails(details) {
+    addDetailCards([
+      ["CPU", `${Number(details?.cpu_usage_percent || 0)}%`],
+      ["Memory", `${Number(details?.memory_usage_percent || 0)}%`],
+      ["IOPS", Number(details?.iops || 0)],
+      ["Underutilized", details?.is_underutilized ? "Yes" : "No"]
+    ]);
+  }
+
+  function renderGenericDetails(details) {
+    const rows = Object.entries(details || {}).map(([key, value]) => [
+      key.replaceAll("_", " "),
+      value && typeof value === "object" ? "See collected metric summary" : value
+    ]);
+    addDetailTable(["Property", "Value"], rows);
+  }
+
+  function showPointDetails(item) {
+    if (!item) return;
+    const date = new Date(item.timestamp);
+    const details = item.details ?? item.data ?? {};
+    pointDetailsTarget.textContent = item.ip || "Unknown";
+    pointDetailsTimestamp.textContent = date.toLocaleString();
+    pointDetailsSummary.textContent = item.summary || "Collected metric details";
+    pointMetricDetails.replaceChildren();
+    if (config.parser === "ahv_partition_usage") renderAhvDetails(details);
+    else if (config.parser === "vm_power_states") renderVmDetails(details);
+    else if (config.parser === "task_monitor") renderTaskDetails(details);
+    else if (config.parser === "pgw_status") renderPgwDetails(details);
+    else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
+    else renderGenericDetails(details);
+    pointDetailsPanel.hidden = false;
+    pointDetailsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function closePointDetails() {
+    pointDetailsPanel.hidden = true;
+    pointMetricDetails.replaceChildren();
+  }
+
+  async function fetchStatsData() {
+    status.hidden = false;
+    status.classList.remove("error");
+    status.textContent = "Loading data…";
+
+    const target = targetFilter.value;
+    const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
+    if (target) params.set("target", target);
+    if (setupTypeFilter.value) params.set("endpoint_type", setupTypeFilter.value);
+
+    try {
+      const response = await fetch("{% url 'stats_data_api' %}?" + params.toString());
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Unable to load stats data.");
+
+      const seen = new Set();
+      const series = (payload.series || []).filter((item) => {
+        const key = `${item.timestamp}|${item.ip}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      const labels = [];
+      closePointDetails();
+
+      series.forEach((item) => {
+        const date = new Date(item.timestamp);
+        labels.push(currentRange.endsWith("h")
+          ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : date.toLocaleDateString([], { month: "short", day: "numeric" }));
+      });
+
+      pointRecords = series;
+      chart.data.labels = labels;
+      chart.data.datasets.forEach((dataset, index) => {
+        const key = datasetConfig[index].key;
+        dataset.data = series.map((item) =>
+          Object.prototype.hasOwnProperty.call(item.values || {}, key)
+            ? item.values[key]
+            : null
+        );
+      });
+      const hasNonZeroData = chart.data.datasets.some((dataset) =>
+        dataset.data.some((value) => Number(value) !== 0)
+      );
+      chart.data.datasets.forEach((dataset) => {
+        dataset.hidden = Boolean(
+          config.hide_empty_datasets
+          && hasNonZeroData
+          && !dataset.data.some((value) => Number(value) !== 0)
+        );
+      });
+      chart.update();
+
+      status.hidden = series.length > 0;
+      status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+    } catch (error) {
+      status.hidden = false;
+      status.classList.add("error");
+      status.textContent = error.message;
+    }
+  }
+
+  function targetLabel() {
+    return (config.target_labels || {})[setupTypeFilter.value] || "Target";
+  }
+
+  function formatTargetOption(item, endpointType) {
+    const value = typeof item === "string" ? item : item.key;
+    const originalLabel = typeof item === "string" ? item : item.label;
+    const ipMatch = String(`${value} ${originalLabel}`).match(
+      /\b(?:\d{1,3}\.){3}\d{1,3}\b/
+    );
+    const ip = ipMatch ? ipMatch[0] : String(value);
+    const name = targetNames[ip];
+    return {
+      key: ip,
+      label: name ? `${endpointType}: ${name} (${ip})` : `${endpointType}: ${ip}`
+    };
+  }
+
+  function refreshTargets() {
+    const type = setupTypeFilter.value;
+    const pcs = azToPcs[azFilter.value] || [];
+    let options = [];
+    if (type === "PC") {
+      options = pcs.map((pc) => formatTargetOption(pc, "PC"));
+    } else if (type === "PE") {
+      const seen = new Set();
+      pcs.forEach((pc) => {
+        (pcToPes[pc.key] || []).forEach((pe) => {
+          const value = typeof pe === "string" ? pe : pe.key;
+          if (!seen.has(value)) {
+            seen.add(value);
+            options.push(formatTargetOption(pe, "PE"));
+          }
+        });
+      });
+    }
+    const label = targetLabel();
+    targetFilterLabel.textContent = label;
+    replaceOptions(targetFilter, `Select ${label}`, options);
+  }
+
+  const supportedTypes = config.endpoint_types || ["PC", "PE"];
+  replaceOptions(
+    setupTypeFilter,
+    "Select Setup Type",
+    supportedTypes.map((type) => ({ key: type, label: type }))
+  );
+  if (supportedTypes.length === 1) {
+    setupTypeFilter.value = supportedTypes[0];
+    setupTypeFilter.disabled = true;
+  }
+
+  azFilter.addEventListener("change", () => {
+    refreshTargets();
+    fetchStatsData();
+  });
+  setupTypeFilter.addEventListener("change", () => {
+    refreshTargets();
+    fetchStatsData();
+  });
+  targetFilter.addEventListener("change", fetchStatsData);
+  pointDetailsClear.addEventListener("click", closePointDetails);
+
+  document.querySelectorAll(".time-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      currentRange = button.dataset.range;
+      document.querySelectorAll(".time-btn").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      fetchStatsData();
+    });
+  });
+
+  fetchStatsData();
+})();
+</script>

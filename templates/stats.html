@@ -1,0 +1,57 @@
+{% extends "pe_base.html" %}
+
+{% block content %}
+<style>
+  .stats-container { background: #f4f5f8; min-height: 900px; padding: 20px; font-family: Arial, sans-serif; }
+  .stats-panel { background: #fff; border: 1px solid #d3d5d9; border-radius: 7px; box-shadow: 0 1px 3px rgba(0, 0, 0, .05); margin-bottom: 20px; padding: 20px; }
+  .stat-picker { display: flex; align-items: end; gap: 14px; flex-wrap: wrap; }
+  .filter-item { display: flex; flex-direction: column; gap: 8px; }
+  .filter-label { color: #14589b; font-size: 14px; font-weight: 700; }
+  .filter-select { background: #fff; border: 1px solid #c8ccd2; border-radius: 4px; font-size: 14px; min-width: 310px; padding: 10px 12px; }
+  .load-stat-button { background: #1769b0; border: 1px solid #1769b0; border-radius: 4px; color: #fff; cursor: pointer; font-size: 14px; font-weight: 700; padding: 10px 22px; }
+  .load-stat-button:hover { background: #12578f; }
+  .stat-summary { color: #58616c; line-height: 1.5; margin: 14px 0 0; }
+  .stats-message { border-radius: 4px; padding: 12px 14px; }
+  .stats-message.error { background: #fff0f0; color: #9d1c1c; }
+  .stats-message.empty { background: #eef5fb; color: #35536c; }
+</style>
+
+<div class="stats-container">
+  <form class="stats-panel stat-picker" method="get">
+    <label class="filter-item" for="statSelector">
+      <span class="filter-label">Stat</span>
+      <select class="filter-select" id="statSelector" name="stat" required>
+        <option value="">Select a stat</option>
+        {% for key, config in stats_registry.items %}
+          <option value="{{ key }}" {% if key == selected_stat_key %}selected{% endif %}>
+            {{ config.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="load-stat-button" type="submit">Load Stat</button>
+  </form>
+
+  {% if registry_error %}
+    <div class="stats-panel stats-message error">
+      The stats registry could not be loaded: {{ registry_error }}
+    </div>
+  {% elif selection_error %}
+    <div class="stats-panel stats-message error">{{ selection_error }}</div>
+  {% elif selected_stat %}
+    <section class="stats-panel">
+      <h2 style="margin: 0;">{{ selected_stat.name }}</h2>
+      <p class="stat-summary">{{ selected_stat.summary }}</p>
+    </section>
+    {{ selected_stat|json_script:"selected-stat-config" }}
+    {{ az_to_pcs|json_script:"stats-az-to-pcs" }}
+    {{ pc_to_pes|json_script:"stats-pc-to-pes" }}
+    {{ stats_target_names|json_script:"stats-target-names" }}
+    {% include selected_stat.page %}
+  {% else %}
+    <div class="stats-panel stats-message empty">
+      Choose a stat above and click <strong>Load Stat</strong> to display its page.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
