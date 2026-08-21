@@ -235,6 +235,13 @@
     pointMetricDetails.appendChild(table);
   }
 
+  function renderSnapshotDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+    let val = parsedData?.recovery_point_usage;
+    addDetailCards([["Usage", val == null ? "No Data" : `${val}%`]]);
+  }
+
   function renderAhvDetails(details) {
     const clusterName = Object.keys(details || {})[0];
     const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
@@ -382,12 +389,15 @@
     pointDetailsTimestamp.textContent = date.toLocaleString();
     pointDetailsSummary.textContent = item.summary || "Collected metric details";
     pointMetricDetails.replaceChildren();
+
     if (config.parser === "ahv_partition_usage") renderAhvDetails(details);
     else if (config.parser === "vm_power_states") renderVmDetails(details);
     else if (config.parser === "task_monitor") renderTaskDetails(details);
     else if (config.parser === "pgw_status") renderPgwDetails(details);
     else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
+    else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else renderGenericDetails(details);
+
     pointDetailsPanel.hidden = false;
     pointDetailsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -431,14 +441,25 @@
 
       pointRecords = series;
       chart.data.labels = labels;
+
       chart.data.datasets.forEach((dataset, index) => {
         const key = datasetConfig[index].key;
-        dataset.data = series.map((item) =>
-          Object.prototype.hasOwnProperty.call(item.values || {}, key)
-            ? item.values[key]
-            : null
-        );
+        dataset.data = series.map((item) => {
+
+          if (config.parser === "snapshot_usage") {
+            let parsedData = item.data;
+            if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+            let val = parsedData?.recovery_point_usage;
+            if (val !== undefined) return val == null ? null : Number(val);
+          }
+
+          const sourceData = item.values || item.data || {};
+          return Object.prototype.hasOwnProperty.call(sourceData, key)
+            ? sourceData[key]
+            : null;
+        });
       });
+
       const hasNonZeroData = chart.data.datasets.some((dataset) =>
         dataset.data.some((value) => Number(value) !== 0)
       );
@@ -535,3 +556,4 @@
   fetchStatsData();
 })();
 </script>
+

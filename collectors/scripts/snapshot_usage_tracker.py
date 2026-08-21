@@ -55,12 +55,12 @@ def get_recovery_point_usage(ip: str, user: str, password: str) -> dict:
     else:
       usage_pct = 0.0
 
-    return {"recory_point_usage_percentage": str(usage_pct)}
+    return {"recovery_point_usage": usage_pct}
 
   except Exception as e:
     logger.error(f"API Request Failed for cluster {ip}: {e}")
-    # Return "N/A" on failure so the UI knows the cluster is unreachable
-    return {"recory_point_usage_percentage": "N/A"}
+    # Return None on failure so the UI knows the cluster is unreachable
+    return {"recovery_point_usage": None}
 
 def run_snapshot_tracker(config_path: str = None) -> None:
   """Reads endpoints config, gathers snapshot usage stats, and prints JSON.
@@ -86,6 +86,15 @@ def run_snapshot_tracker(config_path: str = None) -> None:
 
   # Recovery points are tracked on the PE cluster dashboards
   pes = config_data.get("pes", [])
+
+  # Fallback: if 'pes' is empty, search for PEs inside Zone layout
+  if not pes:
+    for key, nodes in config_data.items():
+      if isinstance(nodes, list):
+        for node in nodes:
+          if node.get("type") == "PE" or "PE" in node.get("name", ""):
+            pes.append(node)
+
   final_results = {}
 
   for pe in pes:
@@ -96,12 +105,13 @@ def run_snapshot_tracker(config_path: str = None) -> None:
       continue
 
     # Credential fallback to DEF_USER and DEF_PWD
-    creds = pe.get("credentials", {})
+    creds = pe.get("credentials", pe)
     user = pe.get("user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pe.get("password", creds.get("password", DEF_PWD))
 
     logger.info(f"Tracking snapshot usage for cluster: {cluster_name} ({ip})...")
-    final_results[cluster_name] = get_recovery_point_usage(ip, user, pwd)
+    # MUST USE IP AS KEY FOR UI DROPDOWN MATCHING
+    final_results[ip] = get_recovery_point_usage(ip, user, pwd)
 
   print(json.dumps(final_results, indent=2))
 
