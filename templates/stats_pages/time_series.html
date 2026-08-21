@@ -236,9 +236,9 @@
   }
 
   function renderSnapshotDetails(details) {
-    let p = details;
-    if (typeof p === "string") { try { p = JSON.parse(p); } catch(e){} }
-    let val = p?.recovery_point_usage;
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+    let val = parsedData?.recovery_point_usage;
     addDetailCards([["Usage", val == null ? "No Data" : `${val}%`]]);
   }
 
@@ -447,9 +447,9 @@
         dataset.data = series.map((item) => {
 
           if (config.parser === "snapshot_usage") {
-            let p = item.data;
-            if (typeof p === "string") { try { p = JSON.parse(p); } catch(e){} }
-            let val = p?.recovery_point_usage;
+            let parsedData = item.data;
+            if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+            let val = parsedData?.recovery_point_usage;
             if (val !== undefined) return val == null ? null : Number(val);
           }
 
