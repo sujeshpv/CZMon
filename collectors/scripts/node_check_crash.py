@@ -89,6 +89,15 @@ def run_crash_audit(config_path: str = None) -> None:
 
   # Target Prism Element endpoints from config
   pes = config_data.get("pes", [])
+
+  # Fallback: if 'pes' is empty, search for PEs inside Zone layout
+  if not pes:
+    for key, nodes in config_data.items():
+      if isinstance(nodes, list):
+        for node in nodes:
+          if node.get("type") == "PE" or "PE" in node.get("name", ""):
+            pes.append(node)
+
   final_results = {}
 
   for pe in pes:
@@ -98,12 +107,15 @@ def run_crash_audit(config_path: str = None) -> None:
     if not ip:
       continue
 
-    creds = pe.get("credentials", {})
+    # Credential fallback to DEF_USER and DEF_PWD (supports both flat and nested creds)
+    creds = pe.get("credentials", pe)
     user = pe.get("ssh_user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pe.get("ssh_password", creds.get("password", DEF_PWD))
 
     logger.info(f"Auditing CVMs for SIGSEGV crashes: {cluster_name} ({ip})...")
-    final_results[cluster_name] = audit_cvm_sigsegv(ip, user, pwd)
+
+    # MUST USE IP AS KEY FOR UI DROPDOWN MATCHING
+    final_results[ip] = audit_cvm_sigsegv(ip, user, pwd)
 
   print(json.dumps(final_results, indent=2))
 
