@@ -1615,6 +1615,35 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "node_tool":
+    if payload.get("error"):
+      return {
+        "values": {},
+        "summary": str(payload["error"]),
+        "details": payload,
+        "mismatch": False,
+        "error": True,
+      }
+    usage = _stats_number(payload.get("usage"))
+    expected = int(_stats_number(payload.get("expected_nodes")))
+    seen = int(_stats_number(payload.get("seen_nodes")))
+    mismatch = bool(payload.get("mismatch")) or expected != seen
+    svm_ip = payload.get("svm_ip") or "SVM"
+    if mismatch:
+      summary = (
+        f"{svm_ip}: node count mismatch, seen {seen} of {expected} SVM(s)."
+      )
+    else:
+      summary = (
+        f"{svm_ip}: {usage:g} GiB, node count matches ({seen}/{expected})."
+      )
+    return {
+      "values": {"usage": usage},
+      "summary": summary,
+      "details": payload,
+      "mismatch": mismatch,
+    }
+
   value = len(payload)
   return {
     "values": {"value": value},
@@ -1700,14 +1729,29 @@ def stats_data_api(request):
 
       where = ["created_at >= datetime('now', ?)"]
       params = [time_modifier]
+      match_cluster_ip = bool(config.get("match_cluster_ip"))
       if target and "ip_address" in columns:
-        where.append("ip_address = ?")
-        params.append(target)
+        if match_cluster_ip:
+          where.append(
+            "(ip_address = ? OR json_extract(status_data, '$.cluster_ip') = ?)"
+          )
+          params.extend([target, target])
+        else:
+          where.append("ip_address = ?")
+          params.append(target)
       elif endpoint_type and "ip_address" in columns:
         if endpoint_ips:
           placeholders = ", ".join("?" for _ in endpoint_ips)
-          where.append(f"ip_address IN ({placeholders})")
-          params.extend(sorted(endpoint_ips))
+          if match_cluster_ip:
+            where.append(
+              f"(ip_address IN ({placeholders}) "
+              f"OR json_extract(status_data, '$.cluster_ip') IN ({placeholders}))"
+            )
+            params.extend(sorted(endpoint_ips))
+            params.extend(sorted(endpoint_ips))
+          else:
+            where.append(f"ip_address IN ({placeholders})")
+            params.extend(sorted(endpoint_ips))
         else:
           where.append("1 = 0")
 

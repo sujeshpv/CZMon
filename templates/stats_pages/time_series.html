@@ -109,6 +109,12 @@
   }];
   let currentRange = "90d";
   let pointRecords = [];
+  let seriesLookup = {};
+  const svmColors = ["#1769b0", "#218838", "#6f42c1", "#fd7e14", "#20c997", "#6610f2"];
+
+  function seriesByIp() {
+    return config.series_by === "ip" || config.parser === "node_tool";
+  }
 
   function chartScales() {
     const scales = {
@@ -162,7 +168,7 @@
       interaction: { intersect: true, mode: "nearest" },
       plugins: {
         legend: {
-          display: datasetConfig.length > 1,
+          display: datasetConfig.length > 1 || seriesByIp(),
           labels: {
             filter(item, data) {
               return !config.hide_empty_datasets || !data.datasets[item.datasetIndex].hidden;
@@ -185,7 +191,14 @@
         const selected = chart.getElementsAtEventForMode(
           event, "nearest", { intersect: true }, true
         );
-        if (selected.length) showPointDetails(pointRecords[selected[0].index]);
+        if (!selected.length) return;
+        const point = selected[0];
+        if (seriesByIp()) {
+          const dataset = chart.data.datasets[point.datasetIndex] || {};
+          showPointDetails(seriesLookup[`${point.index}|${dataset.label}`]);
+          return;
+        }
+        showPointDetails(pointRecords[point.index]);
       }
     }
   });
@@ -373,6 +386,21 @@
     ]);
   }
 
+  function renderNodeToolDetails(details) {
+    addDetailCards([
+      ["SVM", details?.svm_ip || "Unknown"],
+      ["Usage", details?.usage_raw || `${Number(details?.usage || 0)} GiB`],
+      ["Status", details?.status || "Unknown"],
+      ["Node count", details?.mismatch ? "Mismatch" : "Match"],
+      ["Expected", details?.expected_nodes || 0],
+      ["Seen", details?.seen_nodes || 0]
+    ]);
+    const rows = [];
+    (details?.missing_svms || []).forEach((ip) => rows.push(["Missing from ring", ip]));
+    (details?.extra_svms || []).forEach((ip) => rows.push(["Extra in ring", ip]));
+    addDetailTable(["Issue", "SVM"], rows);
+  }
+
   function renderGenericDetails(details) {
     const rows = Object.entries(details || {}).map(([key, value]) => [
       key.replaceAll("_", " "),
@@ -396,6 +424,7 @@
     else if (config.parser === "pgw_status") renderPgwDetails(details);
     else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
+    else if (config.parser === "node_tool") renderNodeToolDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -424,6 +453,9 @@
 
       const seen = new Set();
       const series = (payload.series || []).filter((item) => {
+        if (config.parser === "node_tool" && (item.error || item.details?.error || !item.details?.svm_ip)) {
+          return false;
+        }
         const key = `${item.timestamp}|${item.ip}`;
         if (seen.has(key)) return false;
         seen.add(key);
@@ -440,26 +472,73 @@
       });
 
       pointRecords = series;
-      chart.data.labels = labels;
-
-      chart.data.datasets.forEach((dataset, index) => {
-        const key = datasetConfig[index].key;
-        dataset.data = series.map((item) => {
-
-          if (config.parser === "snapshot_usage") {
-            let parsedData = item.data;
-            if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
-            let val = parsedData?.recovery_point_usage;
-            if (val !== undefined) return val == null ? null : Number(val);
+      seriesLookup = {};
+      if (seriesByIp()) {
+        const timestamps = [];
+        const seenTs = new Set();
+        const byTime = {};
+        const svmIds = [];
+        const svmSeen = new Set();
+        const mismatchBySvm = {};
+        series.forEach((item) => {
+          if (!seenTs.has(item.timestamp)) {
+            seenTs.add(item.timestamp);
+            timestamps.push(item.timestamp);
           }
-
-          const sourceData = item.values || item.data || {};
-          return Object.prototype.hasOwnProperty.call(sourceData, key)
-            ? sourceData[key]
-            : null;
+          if (!svmSeen.has(item.ip)) {
+            svmSeen.add(item.ip);
+            svmIds.push(item.ip);
+          }
+          byTime[item.timestamp] = byTime[item.timestamp] || {};
+          byTime[item.timestamp][item.ip] = item;
+          if (item.mismatch || item.details?.mismatch) mismatchBySvm[item.ip] = true;
         });
-      });
-
+        chart.data.labels = timestamps.map((timestamp) => {
+          const date = new Date(timestamp);
+          return currentRange.endsWith("h")
+            ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : date.toLocaleDateString([], { month: "short", day: "numeric" });
+        });
+        chart.data.datasets = svmIds.map((ip, index) => ({
+          label: ip,
+          data: timestamps.map((timestamp) => {
+            const item = byTime[timestamp]?.[ip];
+            return item ? (item.values || {}).usage : null;
+          }),
+          borderColor: mismatchBySvm[ip] ? "#c82333" : svmColors[index % svmColors.length],
+          backgroundColor: mismatchBySvm[ip] ? "#c82333" : svmColors[index % svmColors.length],
+          borderWidth: 3,
+          borderDash: mismatchBySvm[ip] ? [6, 4] : [],
+          fill: false,
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          tension: .15,
+          yAxisID: "y",
+          spanGaps: true
+        }));
+        timestamps.forEach((timestamp, index) => {
+          svmIds.forEach((ip) => {
+            seriesLookup[`${index}|${ip}`] = byTime[timestamp]?.[ip];
+          });
+        });
+      } else {
+        chart.data.labels = labels;
+        chart.data.datasets.forEach((dataset, index) => {
+          const key = datasetConfig[index].key;
+          dataset.data = series.map((item) => {
+            if (config.parser === "snapshot_usage") {
+              let parsedData = item.data;
+              if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+              let val = parsedData?.recovery_point_usage;
+              if (val !== undefined) return val == null ? null : Number(val);
+            }
+            const sourceData = item.values || item.data || {};
+            return Object.prototype.hasOwnProperty.call(sourceData, key)
+              ? sourceData[key]
+              : null;
+          });
+        });
+      }
       const hasNonZeroData = chart.data.datasets.some((dataset) =>
         dataset.data.some((value) => Number(value) !== 0)
       );
@@ -472,8 +551,16 @@
       });
       chart.update();
 
-      status.hidden = series.length > 0;
-      status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+      const mismatchItem = series.find((item) => item.mismatch || item.details?.mismatch);
+      if (mismatchItem) {
+        status.hidden = false;
+        status.classList.add("error");
+        status.textContent = mismatchItem.summary || "Node count mismatch detected.";
+      } else {
+        status.hidden = series.length > 0;
+        status.classList.remove("error");
+        status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+      }
     } catch (error) {
       status.hidden = false;
       status.classList.add("error");

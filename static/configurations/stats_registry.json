@@ -96,6 +96,22 @@
     "datasets": [
       {"key": "recovery_point_usage", "label": "Snapshot Usage", "color": "#1769b0", "axis": "y"}
     ]
+  },
+  "node_tool": {
+    "name": "Node Tool",
+    "table_name": "node_tool",
+    "summary": "Cassandra ring usage per SVM, flagged when node count does not match svmips.",
+    "page": "stats_pages/time_series.html",
+    "parser": "node_tool",
+    "series_by": "ip",
+    "match_cluster_ip": true,
+    "chart_type": "line",
+    "y_axis": "Usage (GiB)",
+    "is_percentage": false,
+    "endpoint_types": ["PC", "PE"],
+    "target_labels": {"PC": "PC", "PE": "Cluster"},
+    "datasets": [
+      {"key": "usage", "label": "SVM Usage", "color": "#1769b0", "axis": "y"}
+    ]
   }
-
 }
