@@ -92,6 +92,7 @@
   const config = JSON.parse(document.getElementById("selected-stat-config").textContent);
   const azToPcs = JSON.parse(document.getElementById("stats-az-to-pcs").textContent);
   const pcToPes = JSON.parse(document.getElementById("stats-pc-to-pes").textContent);
+  const allPes = JSON.parse((document.getElementById("stats-all-pes") || {}).textContent || "[]");
   const targetNames = JSON.parse(document.getElementById("stats-target-names").textContent);
   const status = document.getElementById("statsStatus");
   const azFilter = document.getElementById("azFilter");
@@ -588,14 +589,17 @@
 
   function refreshTargets() {
     const type = setupTypeFilter.value;
-    const pcs = azToPcs[azFilter.value] || [];
+    const selectedAz = azFilter.value;
+    const pcs = selectedAz
+      ? (azToPcs[selectedAz] || [])
+      : Object.values(azToPcs).flat();
     let options = [];
     if (type === "PC") {
       options = pcs.map((pc) => formatTargetOption(pc, "PC"));
     } else if (type === "PE") {
       const seen = new Set();
       pcs.forEach((pc) => {
-        (pcToPes[pc.key] || []).forEach((pe) => {
+        (pcToPes[pc.key] || pcToPes[pc.ip] || []).forEach((pe) => {
           const value = typeof pe === "string" ? pe : pe.key;
           if (!seen.has(value)) {
             seen.add(value);
@@ -603,10 +607,20 @@
           }
         });
       });
+      if (!options.length) {
+        (allPes || []).forEach((pe) => {
+          const value = typeof pe === "string" ? pe : pe.key;
+          if (!seen.has(value)) {
+            seen.add(value);
+            options.push(formatTargetOption(pe, "PE"));
+          }
+        });
+      }
     }
     const label = targetLabel();
     targetFilterLabel.textContent = label;
     replaceOptions(targetFilter, `Select ${label}`, options);
+    targetFilter.disabled = !type || options.length === 0;
   }
 
   const supportedTypes = config.endpoint_types || ["PC", "PE"];

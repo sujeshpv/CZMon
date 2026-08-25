@@ -349,6 +349,14 @@ def _build_overview_context():
         pe_ip = str((pe.get("ip") if isinstance(pe, dict) else pe) or "").strip()
         if pe_ip:
             entity_kind_map[pe_ip] = "PE"
+            az_key = str(pe.get("az") or "").strip()
+            if az_key and az_key not in az_seen:
+                az_seen.add(az_key)
+                az_options.append(az_key)
+            if az_key:
+                entities_for_az = az_to_entities.setdefault(az_key, [])
+                if pe_ip not in entities_for_az:
+                    entities_for_az.append(pe_ip)
     endpoint_entities = []
     endpoint_seen = set()
     for az in az_options:
