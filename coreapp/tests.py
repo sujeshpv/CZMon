@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -7,9 +8,12 @@ from unittest.mock import Mock, patch
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 
+from collectors.cli_processor import CliProcessor
 from collectors.scripts.check_underutilized_cluster import check_cluster_utilization
+from collectors.scripts.node_tool import build_svm_records, load_endpoints
 from collectors.scripts.task_monitor import get_tasks_from_pc
 from coreapp.views import _load_stats_target_names, _normalize_stats_payload
+from runner import Runner
 
 
 class StatsFrameworkTests(TestCase):
@@ -258,3 +262,61 @@ class UnderutilizedClusterCollectorTests(SimpleTestCase):
     self.assertEqual(result["cpu_usage_percent"], 40.25)
     self.assertEqual(result["memory_usage_percent"], 58.16)
     self.assertEqual(result["iops"], 1750.0)
+
+
+class NodeToolCollectorTests(SimpleTestCase):
+  def test_load_endpoints_skips_pcs(self):
+    endpoints = load_endpoints(
+      {
+        "pcs": [{"name": "pc-1", "ip": "10.0.0.1", "type": "PC"}],
+        "pes": [{"name": "pe-1", "ip": "10.0.0.2"}],
+      }
+    )
+    self.assertEqual([item["ip"] for item in endpoints], ["10.0.0.2"])
+
+  def test_load_endpoints_uses_pe_entries_from_zone_layout(self):
+    endpoints = load_endpoints(
+      {
+        "Zone1": [
+          {"type": "PC", "ip": "10.0.0.1"},
+          {"type": "PE", "ip": "10.0.0.2"},
+        ]
+      }
+    )
+    self.assertEqual([item["ip"] for item in endpoints], ["10.0.0.2"])
+
+  def test_build_svm_records_flags_node_count_mismatch(self):
+    records = build_svm_records(
+      "10.46.250.211",
+      "10.46.250.185 10.46.250.186",
+      "10.46.250.185 Up Normal 7.04 GB\n10.46.250.185 Up Normal 7.04 GB",
+    )
+    self.assertEqual(sorted(records), ["10.46.250.185", "10.46.250.186"])
+    self.assertTrue(records["10.46.250.185"]["mismatch"])
+    self.assertEqual(records["10.46.250.185"]["expected_nodes"], 2)
+    self.assertEqual(records["10.46.250.185"]["seen_nodes"], 1)
+    self.assertEqual(records["10.46.250.185"]["usage"], 7.04)
+    self.assertEqual(records["10.46.250.186"]["status"], "Missing")
+
+  def test_cli_catalog_endpoint_type_accepts_string_or_list(self):
+    processor = CliProcessor.__new__(CliProcessor)
+    self.assertEqual(processor._endpoint_types({"endpoint_type": "PE"}), ["PE"])
+    self.assertEqual(processor._endpoint_types({"endpoint_type": ["PE"]}), ["PE"])
+    self.assertTrue(
+      processor._is_node_tool_metric(
+        "cassandra_node_consistency",
+        ["nodetool -h 0 ring"],
+      )
+    )
+
+  def test_runner_sets_pe_ips_from_pes_list(self):
+    runner = Runner.__new__(Runner)
+    with patch.dict(os.environ, {}, clear=False):
+      runner.set_environment_variables(
+        {
+          "pcs": [{"name": "pc-1", "ip": "10.0.0.1"}],
+          "pes": [{"name": "pe-1", "ip": "10.46.250.211"}],
+        }
+      )
+      self.assertEqual(runner.pe_ips, ["10.46.250.211"])
+      self.assertEqual(os.environ.get("PE_IPS"), "10.46.250.211")

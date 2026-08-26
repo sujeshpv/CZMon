@@ -2,6 +2,7 @@ from common.connection.sqliteworker import Sqlite3Worker
 from common.connection.ssh_connect import Ssh
 from common.logger.logger import EntryExit, setup_logger
 from collectors.api_processor import ApiProcessor
+from collectors.scripts.node_tool import DEF_PWD, DEF_UNAME, check_cluster_nodes
 from common.exceptions.exceptions import *
 from library.const import NUTANIX
 from library.urls import CLUSTER
@@ -9,6 +10,8 @@ import os
 import re
 import json
 from numbers import Number
+
+NODE_TOOL_TABLES = {"cassandra_node_consistency", "node_tool"}
 
 LOGGER = setup_logger(__name__)
 
@@ -260,6 +263,32 @@ class CliProcessor:
       self.db_worker.ensure_schema(table_name, row)
       self.db_worker.insert_row(table_name, row)
 
+  def _endpoint_types(self, entity_data):
+    """Normalize catalog endpoint_type to a list of PC/PE labels."""
+    raw = entity_data.get("endpoint_type") or []
+    if isinstance(raw, str):
+      raw = [raw]
+    return [str(item).strip().upper() for item in raw if str(item).strip()]
+
+  def _is_node_tool_metric(self, table_name, commands):
+    """Return True for Cassandra ring / node-count mismatch collection."""
+    if table_name in NODE_TOOL_TABLES:
+      return True
+    return any("nodetool" in str(command).lower() for command in commands)
+
+  def _persist_node_tool_rows(self, table_name, cluster_ip):
+    """Store one SVM usage/mismatch row for a PE cluster."""
+    results = check_cluster_nodes(cluster_ip, DEF_UNAME, DEF_PWD)
+    for svm_ip, payload in results.items():
+      values = {
+        "ip_address": svm_ip,
+        "status_data": (
+          json.dumps(payload) if isinstance(payload, dict) else str(payload)
+        ),
+      }
+      self.db_worker.ensure_schema(table_name, values)
+      self.db_worker.insert_row(table_name, values)
+
   @EntryExit
   def process_data(self, config):
     """
@@ -276,12 +305,28 @@ class CliProcessor:
         endpoint_type = entity_data.get("endpoint_type")
         commands = entity_data.get("command", [])
         ip_endpoints = [
-          (ip, et)
-          for et in endpoint_type
+          (ip.strip(), et)
+          for et in self._endpoint_types(entity_data)
           for ip in os.environ.get(f"{et}_IPS", "").split(",")
-          if ip
+          if ip.strip()
         ]
         for ip, current_endpoint_type in ip_endpoints:
+          if self._is_node_tool_metric(table_name, commands):
+            try:
+              LOGGER.info("Collecting Cassandra ring data for PE %s", ip)
+              self._persist_node_tool_rows(table_name, ip)
+            except Exception as cmd_err:
+              error = CZMonError(
+                "Command execution failed",
+                cause=cmd_err,
+                context={
+                  "ip": ip,
+                  "command": "nodetool -h 0 ring",
+                  "table": table_name,
+                },
+              )
+              LOGGER.error(error)
+            continue
           try:
             ssh_obj = Ssh(ip, NUTANIX)
             for command in commands:

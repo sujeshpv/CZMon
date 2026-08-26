@@ -6,9 +6,9 @@
   },
 
   "cassandra_node_consistency": {
-    "description": "Runs nodetool ring to verify Cassandra consistency",
+    "description": "Compares svmips with nodetool ring and records per-SVM usage",
     "command": ["nodetool -h 0 ring"],
-    "endpoint_type": "PE"
+    "endpoint_type": ["PE"]
   }
 }
 

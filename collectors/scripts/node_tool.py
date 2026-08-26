@@ -1,8 +1,7 @@
-"""Cassandra node consistency check (ENG-925555).
+"""Cassandra node consistency helpers used by the CLI collector.
 
 Compares unique SVM IPs from `svmips` with unique nodes in
-`nodetool -h 0 ring`. Prints one JSON record per SVM so the local
-collector can store per-SVM usage and flag node-count mismatches.
+`nodetool -h 0 ring`. CliProcessor stores one JSON record per SVM.
 """
 
 import json
@@ -143,32 +142,8 @@ def run_cvm_commands(cluster_ip, user, password):
     client.close()
 
 
-def check_cluster_nodes(cluster_ip, user, password):
-  """Compare svmips with nodetool ring and return per-SVM records.
-
-  Args:
-    cluster_ip (str): PC or PE virtual IP.
-    user (str): Endpoint username.
-    password (str): Endpoint password.
-
-  Returns:
-    dict: Mapping of SVM IP to status payload.
-  """
-  try:
-    svmips_out, nodetool_out = run_cvm_commands(cluster_ip, user, password)
-  except Exception as error:
-    LOGGER.error("Node tool check failed for %s: %s", cluster_ip, error)
-    return {
-      cluster_ip: {
-        "cluster_ip": cluster_ip,
-        "error": str(error),
-        "mismatch": False,
-        "expected_nodes": 0,
-        "seen_nodes": 0,
-        "usage": 0,
-      }
-    }
-
+def build_svm_records(cluster_ip, svmips_out, nodetool_out):
+  """Build per-SVM payloads from svmips and nodetool ring output."""
   expected_svms = parse_svmips(svmips_out)
   ring_nodes = parse_nodetool_ring(nodetool_out)
   seen_svms = list(ring_nodes)
@@ -200,17 +175,58 @@ def check_cluster_nodes(cluster_ip, user, password):
   return results
 
 
-def load_endpoints(config_data):
-  """Normalize both endpoints.json formats into a flat endpoint list."""
-  endpoints = []
-  if "pes" in config_data or "pcs" in config_data:
-    endpoints.extend(config_data.get("pcs", []))
-    endpoints.extend(config_data.get("pes", []))
-    return endpoints
+def check_cluster_nodes(cluster_ip, user, password):
+  """Compare svmips with nodetool ring and return per-SVM records.
 
-  for _, entries in config_data.items():
-    if isinstance(entries, list):
-      endpoints.extend(entries)
+  Args:
+    cluster_ip (str): PE virtual IP.
+    user (str): Endpoint username.
+    password (str): Endpoint password.
+
+  Returns:
+    dict: Mapping of SVM IP to status payload.
+  """
+  try:
+    svmips_out, nodetool_out = run_cvm_commands(cluster_ip, user, password)
+  except Exception as error:
+    LOGGER.error("Node tool check failed for %s: %s", cluster_ip, error)
+    return {
+      cluster_ip: {
+        "cluster_ip": cluster_ip,
+        "error": str(error),
+        "mismatch": False,
+        "expected_nodes": 0,
+        "seen_nodes": 0,
+        "usage": 0,
+      }
+    }
+  return build_svm_records(cluster_ip, svmips_out, nodetool_out)
+
+
+def _is_pe_endpoint(endpoint):
+  """Return True when an endpoint is a Prism Element cluster."""
+  if not isinstance(endpoint, dict):
+    return False
+  endpoint_type = str(endpoint.get("type") or "").strip().upper()
+  return endpoint_type == "PE" or not endpoint_type
+
+
+def load_endpoints(config_data):
+  """Return PE endpoints only. Node tool is not applicable to PC."""
+  if "pes" in config_data or "pcs" in config_data:
+    return [
+      endpoint
+      for endpoint in config_data.get("pes", [])
+      if _is_pe_endpoint(endpoint)
+    ]
+
+  endpoints = []
+  for entries in config_data.values():
+    if not isinstance(entries, list):
+      continue
+    for entry in entries:
+      if str(entry.get("type") or "").upper() == "PE":
+        endpoints.append(entry)
   return endpoints
 
 

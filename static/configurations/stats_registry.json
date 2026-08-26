@@ -99,7 +99,7 @@
   },
   "node_tool": {
     "name": "Node Tool",
-    "table_name": "node_tool",
+    "table_name": "cassandra_node_consistency",
     "summary": "Cassandra ring usage per SVM, flagged when node count does not match svmips.",
     "page": "stats_pages/time_series.html",
     "parser": "node_tool",
@@ -108,8 +108,8 @@
     "chart_type": "line",
     "y_axis": "Usage (GiB)",
     "is_percentage": false,
-    "endpoint_types": ["PC", "PE"],
-    "target_labels": {"PC": "PC", "PE": "Cluster"},
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
     "datasets": [
       {"key": "usage", "label": "SVM Usage", "color": "#1769b0", "axis": "y"}
     ]
