@@ -94,10 +94,31 @@ class Runner:
       Configuration containing PC and PE IP details.
     """
     try:
+      def ips_from_entries(entries, endpoint_type=None):
+        ips = []
+        for node in entries or []:
+          if not isinstance(node, dict) or not node.get("ip"):
+            continue
+          if endpoint_type:
+            node_type = str(node.get("type") or "").strip().upper()
+            if node_type and node_type != endpoint_type:
+              continue
+          ips.append(node.get("ip"))
+        return ips
+
       pcs = testbed_config.get("pcs", []) or []
       top_level_pes = testbed_config.get("pes", []) or []
-      self.pc_ips = [node.get("ip") for zone in testbed_config for node in testbed_config[zone] if node.get("type") == "PC"]
-      self.pe_ips = [node.get("ip") for zone in testbed_config for node in testbed_config[zone] if node.get("type") == "PE"]
+      self.pc_ips = ips_from_entries(pcs)
+      self.pe_ips = ips_from_entries(top_level_pes)
+      if not self.pc_ips and not self.pe_ips:
+        zone_entries = [
+          node
+          for entries in testbed_config.values()
+          if isinstance(entries, list)
+          for node in entries
+        ]
+        self.pc_ips = ips_from_entries(zone_entries, "PC")
+        self.pe_ips = ips_from_entries(zone_entries, "PE")
 
       if self.pc_ips:
         os.environ["PC_IPS"] = ",".join(self.pc_ips)
