@@ -242,6 +242,34 @@
     addDetailCards([["Usage", val == null ? "No Data" : `${val}%`]]);
   }
 
+  function renderExpiredSnapshotDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+
+    const summary = parsedData?.summary_data || {};
+    const isSuccessful = parsedData?.is_successful;
+    const snapshots = parsedData?.snapshots_data || [];
+
+    if (isSuccessful === false) {
+      addDetailCards([
+        ["Audit Status", "FAILED"], 
+        ["Error", summary.error || "Unknown Error"]
+      ]);
+      return;
+    }
+
+    addDetailCards([
+      ["Total Expired", summary.total_expired_snapshots ?? 0],
+      ["Oldest Snapshot", summary.oldest_snapshot_date || "N/A"],
+      ["Status", summary.status || "N/A"]
+    ]);
+
+    if (snapshots.length > 0) {
+      const rows = snapshots.map(snapshot => [snapshot.vm_name, snapshot.rp_name, snapshot.expired_at]);
+      addDetailTable(["VM Name", "Recovery Point", "Expired At"], rows);
+    }
+  }
+
   function renderAhvDetails(details) {
     const clusterName = Object.keys(details || {})[0];
     const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
@@ -396,6 +424,7 @@
     else if (config.parser === "pgw_status") renderPgwDetails(details);
     else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
+    else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -450,6 +479,14 @@
             let parsedData = item.data;
             if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
             let val = parsedData?.recovery_point_usage;
+            if (val !== undefined) return val == null ? null : Number(val);
+          }
+
+          if (config.parser === "expired_snapshots") {
+            let parsedData = item.data;
+            if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+            if (parsedData?.is_successful === false) return null;
+            let val = parsedData?.summary_data?.total_expired_snapshots;
             if (val !== undefined) return val == null ? null : Number(val);
           }
 
