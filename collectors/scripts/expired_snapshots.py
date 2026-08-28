@@ -105,16 +105,10 @@ def verify_expired_snapshots(ip: str, user: str, password: str) -> tuple:
         if expired_at and expired_at < current_time:
           parent_vm = resources.get("parent_vm_reference", {})
 
-          vm_name = parent_vm.get("name")
-          vm_uuid = parent_vm.get("uuid", "Unknown")
-
-          if not vm_name or vm_name == "Unknown":
-            vm_name = vm_uuid
-
           expired_list.append({
-            "vm_name": vm_name,
+            "vm_name": parent_vm.get("name", "Unknown"),
             "entity_type": "VM",
-            "entity_uuid": vm_uuid,
+            "entity_uuid": parent_vm.get("uuid", "Unknown"),
             "snapshot_uuid": metadata.get("uuid", "Unknown"),
             "rp_name": status.get("name", ""),
             "created_at": metadata.get("creation_time", "Unknown"),
@@ -162,15 +156,6 @@ def run_snapshot_collection(config_path: str = None) -> dict:
     return {"error": f"Failed to load config: {str(e)}"}
 
   pcs = config_data.get("pcs", [])
-
-  # Fallback: search for PCs inside Zone layout
-  if not pcs:
-    for key, nodes in config_data.items():
-      if isinstance(nodes, list):
-        for node in nodes:
-          if node.get("type") == "PC" or "PC" in node.get("name", ""):
-            pcs.append(node)
-
   results = {}
 
   for pc in pcs:
@@ -178,8 +163,7 @@ def run_snapshot_collection(config_path: str = None) -> dict:
     if not ip:
       continue
 
-    # Handles both flat endpoints and nested credentials
-    creds = pc.get("credentials", pc)
+    creds = pc.get("credentials", {})
     user = pc.get("user", creds.get("username", creds.get("user", DEF_USER)))
     pwd = pc.get("password", creds.get("password", DEF_PWD))
 
@@ -187,7 +171,6 @@ def run_snapshot_collection(config_path: str = None) -> dict:
       ip, user, pwd
     )
 
-    # Uses IP directly as key so UI can find it
     results[ip] = {
       "is_successful": is_successful,
       "summary_data": summary_data,

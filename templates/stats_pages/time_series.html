@@ -250,6 +250,8 @@
     const isSuccessful = parsedData?.is_successful;
     const snapshots = parsedData?.snapshots_data || [];
 
+    document.getElementById("pointDetailsSummary").textContent = `Found ${summary.total_expired_snapshots || 0} expired snapshots on this Prism Central.`;
+
     if (isSuccessful === false) {
       addDetailCards([
         ["Audit Status", "FAILED"], 
