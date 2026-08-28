@@ -96,6 +96,24 @@
     "datasets": [
       {"key": "recovery_point_usage", "label": "Snapshot Usage", "color": "#1769b0", "axis": "y"}
     ]
+  },
+
+  "node_check_crash": {
+    "name": "SIGSEGV Crash Audit",
+    "table_name": "node_check_crash",
+    "summary": "Audits clusters for process segmentation faults (SIGSEGV) in CVM logs.",
+    "page": "stats_pages/time_series.html",
+    "parser": "node_crash",
+    "chart_type": "line",
+    "y_axis": "Status",
+    "is_percentage": false,
+    "status_axis": true,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "status", "label": "No Crashes", "color": "#dc3545", "axis": "y", "stepped": true}
+    ]
   }
+
 
 }
