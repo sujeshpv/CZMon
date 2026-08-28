@@ -272,6 +272,30 @@
     }
   }
 
+  function renderCrashDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+
+    let status = parsedData?.status || "Unknown";
+    let hasCrash = parsedData?.crash_found;
+    let logOutput = parsedData?.details || parsedData?.error || "No logs available";
+
+    addDetailCards([
+      ["Audit Status", status],
+      ["Crash Found", hasCrash === true ? "YES" : (hasCrash === false ? "NO" : "N/A")]
+    ]);
+
+    const logCard = createElement("div", "metric-detail-card");
+    logCard.style.marginTop = "14px";
+    logCard.appendChild(createElement("span", "point-meta-label", "Log Output"));
+    const pre = createElement("pre", "");
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontSize = "12px";
+    pre.textContent = logOutput;
+    logCard.appendChild(pre);
+    pointMetricDetails.appendChild(logCard);
+  }
+
   function renderAhvDetails(details) {
     const clusterName = Object.keys(details || {})[0];
     const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
@@ -427,6 +451,7 @@
     else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
+    else if (config.parser === "node_crash") renderCrashDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -490,6 +515,15 @@
             if (parsedData?.is_successful === false) return null;
             let val = parsedData?.summary_data?.total_expired_snapshots;
             if (val !== undefined) return val == null ? null : Number(val);
+          }
+
+          if (config.parser === "node_crash") {
+            let parsedData = item.data;
+            if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+            let status = parsedData?.status;
+            if (status === "PASS") return 1;
+            if (status === "FAIL" || status === "ERROR") return 0;
+            return null;
           }
 
           const sourceData = item.values || item.data || {};
@@ -595,4 +629,3 @@
   fetchStatsData();
 })();
 </script>
-
