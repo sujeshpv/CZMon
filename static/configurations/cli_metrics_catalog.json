@@ -6,8 +6,8 @@
   },
 
   "cassandra_node_consistency": {
-    "description": "Compares svmips with nodetool ring and records per-SVM usage",
-    "command": ["nodetool -h 0 ring"],
+    "description": "Runs svmips and nodetool ring; Stats UI flags node-count mismatch",
+    "command": ["svmips", "nodetool -h 0 ring"],
     "endpoint_type": ["PE"]
   }
 }

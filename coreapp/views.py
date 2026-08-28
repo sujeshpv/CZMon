@@ -7,6 +7,7 @@ from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from urllib.parse import quote_plus
 from library.const import *
+from collectors.scripts.node_tool import build_svm_records, parse_nodetool_ring, parse_svmips
 import json
 import math
 import os
@@ -1657,7 +1658,88 @@ def _normalize_stats_payload(stat_key, payload):
     "values": {"value": value},
     "summary": f"Captured {value} record(s).",
     "details": payload,
-  }
+    }
+
+
+def _cli_command_output(row_dict, payload):
+  """Return the raw CLI command output stored by CliProcessor."""
+  output = row_dict.get("output")
+  if output:
+    return str(output)
+  if not isinstance(payload, dict):
+    return str(payload or "")
+  if payload.get("raw"):
+    return str(payload["raw"])
+  blocks = payload.get("blocks")
+  if isinstance(blocks, list):
+    lines = []
+    for block in blocks:
+      if isinstance(block, dict):
+        lines.extend(block.get("lines") or [])
+    return "\n".join(str(line) for line in lines)
+  return ""
+
+
+def _node_tool_stats_series(row_dicts):
+  """Turn stored CLI output (or existing per-SVM JSON) into chart series."""
+  points = []
+  cli_groups = {}
+  for row_dict in row_dicts:
+    payload = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
+    if isinstance(payload, (dict, list)):
+      parsed = payload
+    else:
+      try:
+        parsed = json.loads(payload)
+      except (TypeError, json.JSONDecodeError):
+        parsed = {"raw": payload}
+
+    if isinstance(parsed, dict) and parsed.get("svm_ip"):
+      cluster_ip = parsed.get("cluster_ip") or row_dict.get("ip_address")
+      points.append(
+        {
+          "timestamp": row_dict.get("created_at", "Latest"),
+          "ip": parsed.get("svm_ip") or cluster_ip or "Unknown",
+          "data": parsed,
+          **_normalize_stats_payload("node_tool", parsed),
+        }
+      )
+      continue
+
+    cluster_ip = (
+      row_dict.get("ip")
+      or row_dict.get("ip_address")
+      or (parsed.get("cluster_ip") if isinstance(parsed, dict) else "")
+      or "Unknown"
+    )
+    command = str(row_dict.get("command") or "").lower()
+    output = _cli_command_output(row_dict, parsed)
+    timestamp = row_dict.get("created_at", "Latest")
+    bucket = (str(cluster_ip), str(timestamp)[:16])
+    group = cli_groups.setdefault(
+      bucket,
+      {"ip": cluster_ip, "timestamp": timestamp, "svmips": "", "nodetool": ""},
+    )
+    if "nodetool" in command or parse_nodetool_ring(output):
+      group["nodetool"] = output
+    if "svmips" in command or (parse_svmips(output) and not parse_nodetool_ring(output)):
+      group["svmips"] = output
+
+  for group in cli_groups.values():
+    if not group["svmips"] and not group["nodetool"]:
+      continue
+    records = build_svm_records(group["ip"], group["svmips"], group["nodetool"])
+    for svm_ip, record in records.items():
+      points.append(
+        {
+          "timestamp": group["timestamp"],
+          "ip": svm_ip,
+          "data": record,
+          **_normalize_stats_payload("node_tool", record),
+        }
+      )
+  points.sort(key=lambda item: (item.get("timestamp") or "", item.get("ip") or ""))
+  return points
 
 
 def _configured_stats_ips(endpoint_type):
@@ -1738,16 +1820,22 @@ def stats_data_api(request):
       where = ["created_at >= datetime('now', ?)"]
       params = [time_modifier]
       match_cluster_ip = bool(config.get("match_cluster_ip"))
+      target_clauses = []
       if target and "ip_address" in columns:
         if match_cluster_ip:
-          where.append(
+          target_clauses.append(
             "(ip_address = ? OR json_extract(status_data, '$.cluster_ip') = ?)"
           )
           params.extend([target, target])
         else:
-          where.append("ip_address = ?")
+          target_clauses.append("ip_address = ?")
           params.append(target)
-      elif endpoint_type and "ip_address" in columns:
+      if target and "ip" in columns:
+        target_clauses.append("ip = ?")
+        params.append(target)
+      if target_clauses:
+        where.append("(" + " OR ".join(target_clauses) + ")")
+      elif not target and endpoint_type and "ip_address" in columns:
         if endpoint_ips:
           placeholders = ", ".join("?" for _ in endpoint_ips)
           if match_cluster_ip:
@@ -1762,6 +1850,13 @@ def stats_data_api(request):
             params.extend(sorted(endpoint_ips))
         else:
           where.append("1 = 0")
+      elif not target and endpoint_type and "ip" in columns:
+        if endpoint_ips:
+          placeholders = ", ".join("?" for _ in endpoint_ips)
+          where.append(f"ip IN ({placeholders})")
+          params.extend(sorted(endpoint_ips))
+        else:
+          where.append("1 = 0")
 
       query = f"""
         SELECT * FROM "{table_name}"
@@ -1770,32 +1865,35 @@ def stats_data_api(request):
         LIMIT 100
       """
       rows = cursor.execute(query, params).fetchall()
+      row_dicts = [dict(row) for row in rows]
+      if stat_key == "node_tool":
+        data_points = _node_tool_stats_series(row_dicts)
+      else:
+        for row_dict in row_dicts:
+          ip = (
+            row_dict.get("ip_address")
+            or row_dict.get("cluster_name")
+            or row_dict.get("ip")
+            or "Unknown"
+          )
+          raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
+          if isinstance(raw_data, (dict, list)):
+            payload = raw_data
+          else:
+            try:
+              payload = json.loads(raw_data)
+            except (TypeError, json.JSONDecodeError):
+              payload = {"raw": raw_data}
 
-      for row in rows:
-        row_dict = dict(row)
-        ip = (
-          row_dict.get("ip_address")
-          or row_dict.get("cluster_name")
-          or row_dict.get("ip")
-          or "Unknown"
-        )
-        raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
-        if isinstance(raw_data, (dict, list)):
-          payload = raw_data
-        else:
-          try:
-            payload = json.loads(raw_data)
-          except (TypeError, json.JSONDecodeError):
-            payload = {"raw": raw_data}
-
-        data_points.append(
-          {
-            "timestamp": row_dict.get("created_at", "Latest"),
-            "ip": ip,
-            "data": payload,
-            **_normalize_stats_payload(stat_key, payload),
-          }
-        )
+          data_points.append(
+            {
+              "timestamp": row_dict.get("created_at", "Latest"),
+              "ip": ip,
+              "data": payload,
+              **_normalize_stats_payload(stat_key, payload),
+            }
+          )
+        data_points = data_points[::-1]
   except sqlite3.Error as error:
     return JsonResponse({"error": f"Failed loading stats data: {error}"}, status=500)
 
@@ -1804,6 +1902,6 @@ def stats_data_api(request):
       "stat": stat_key,
       "name": config["name"],
       "endpoint_types": supported_types,
-      "series": data_points[::-1],
+      "series": data_points,
     }
   )

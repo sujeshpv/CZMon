@@ -12,7 +12,11 @@ from collectors.cli_processor import CliProcessor
 from collectors.scripts.check_underutilized_cluster import check_cluster_utilization
 from collectors.scripts.node_tool import build_svm_records, load_endpoints
 from collectors.scripts.task_monitor import get_tasks_from_pc
-from coreapp.views import _load_stats_target_names, _normalize_stats_payload
+from coreapp.views import (
+  _load_stats_target_names,
+  _node_tool_stats_series,
+  _normalize_stats_payload,
+)
 from runner import Runner
 
 
@@ -302,12 +306,28 @@ class NodeToolCollectorTests(SimpleTestCase):
     processor = CliProcessor.__new__(CliProcessor)
     self.assertEqual(processor._endpoint_types({"endpoint_type": "PE"}), ["PE"])
     self.assertEqual(processor._endpoint_types({"endpoint_type": ["PE"]}), ["PE"])
-    self.assertTrue(
-      processor._is_node_tool_metric(
-        "cassandra_node_consistency",
-        ["nodetool -h 0 ring"],
-      )
+
+  def test_stats_ui_parses_raw_cli_output_into_per_svm_series(self):
+    series = _node_tool_stats_series(
+      [
+        {
+          "ip": "10.46.250.211",
+          "command": "svmips",
+          "output": "10.46.250.185 10.46.250.186",
+          "created_at": "2026-08-27T04:08:09.000000+00:00",
+        },
+        {
+          "ip": "10.46.250.211",
+          "command": "nodetool -h 0 ring",
+          "output": "10.46.250.185 Up Normal 7.04 GB\n10.46.250.185 Up Normal 7.04 GB",
+          "created_at": "2026-08-27T04:08:24.000000+00:00",
+        },
+      ]
     )
+    by_ip = {item["ip"]: item for item in series}
+    self.assertTrue(by_ip["10.46.250.185"]["mismatch"])
+    self.assertEqual(by_ip["10.46.250.185"]["values"]["usage"], 7.04)
+    self.assertEqual(by_ip["10.46.250.186"]["details"]["status"], "Missing")
 
   def test_runner_sets_pe_ips_from_pes_list(self):
     runner = Runner.__new__(Runner)
