@@ -123,12 +123,20 @@
         title: { display: true, text: config.y_axis || "Value" }
       }
     };
+
     if (config.status_axis) {
       scales.y.ticks = {
         stepSize: 1,
-        callback: (value) => Number(value) === 1 ? "ON" : "OFF"
+        callback: (value) => {
+          const statusLabels = config.status_labels || {
+            "1": "ON",
+            "0": "OFF"
+          };
+          return statusLabels[String(Number(value))] || value;
+        }
       };
     }
+
     if (datasetConfig.some((item) => item.axis === "y1")) {
       scales.y1 = {
         beginAtZero: true,
@@ -137,6 +145,7 @@
         title: { display: true, text: "IOPS" }
       };
     }
+
     return scales;
   }
 
@@ -173,7 +182,13 @@
           callbacks: {
             label(context) {
               if (config.status_axis) {
-                return `${context.dataset.label}: ${Number(context.raw) === 1 ? "ON" : "OFF"}`;
+                const statusLabels = config.status_labels || {
+                  "1": "ON",
+                  "0": "OFF"
+                };
+                const statusLabel = statusLabels[String(Number(context.raw))]
+                  || context.formattedValue;
+                return `${context.dataset.label}: ${statusLabel}`;
               }
               return `${context.dataset.label}: ${context.formattedValue}`;
             }
@@ -233,6 +248,42 @@
       });
     });
     pointMetricDetails.appendChild(table);
+  }
+
+  function parseCrudResult(resultValue) {
+    if (resultValue === true || resultValue === "true") return true;
+    if (resultValue === false || resultValue === "false") return false;
+    return null;
+  }
+
+  function renderVmCrudDetails(details) {
+    let parsedData = details;
+
+    if (typeof parsedData === "string") {
+      try {
+        parsedData = JSON.parse(parsedData);
+      } catch (error) {
+        parsedData = {};
+      }
+    }
+
+    const createResult = parseCrudResult(parsedData?.vm_create_result);
+    const updateResult = parseCrudResult(parsedData?.vm_update_result);
+    const deleteResult = parseCrudResult(parsedData?.vm_delete_result);
+    const operationResults = [createResult, updateResult, deleteResult];
+
+    const overallResult = operationResults.every((result) => result === true)
+      ? "PASS"
+      : "FAIL";
+
+    pointDetailsSummary.textContent = `VM CRUD result: ${overallResult}`;
+
+    addDetailCards([
+      ["Overall Result", overallResult],
+      ["Create VM", createResult === true ? "PASS" : "FAIL"],
+      ["Update VM", updateResult === true ? "PASS" : "FAIL"],
+      ["Delete VM", deleteResult === true ? "PASS" : "FAIL"]
+    ]);
   }
 
   function renderSnapshotDetails(details) {
@@ -421,6 +472,7 @@
     else if (config.parser === "cluster_utilization") renderUtilizationDetails(details);
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
+    else if (config.parser === "vm_crud_sanity") renderVmCrudDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -487,6 +539,40 @@
             return null;
           }
 
+          if (config.parser === "vm_crud_sanity") {
+            let parsedData = item.data;
+
+            if (typeof parsedData === "string") {
+              try {
+                parsedData = JSON.parse(parsedData);
+              } catch (error) {
+                parsedData = {};
+              }
+            }
+
+            const createResult = parseCrudResult(
+              parsedData?.vm_create_result
+            );
+            const updateResult = parseCrudResult(
+              parsedData?.vm_update_result
+            );
+            const deleteResult = parseCrudResult(
+              parsedData?.vm_delete_result
+            );
+
+            const operationResults = [
+              createResult,
+              updateResult,
+              deleteResult
+            ];
+
+            if (operationResults.some((result) => result === null)) {
+              return null;
+            }
+
+            return operationResults.every((result) => result === true) ? 1 : 0;
+          }
+
           const sourceData = item.values || item.data || {};
           return Object.prototype.hasOwnProperty.call(sourceData, key)
             ? sourceData[key]
@@ -537,6 +623,7 @@
     const type = setupTypeFilter.value;
     const pcs = azToPcs[azFilter.value] || [];
     let options = [];
+
     if (type === "PC") {
       options = pcs.map((pc) => formatTargetOption(pc, "PC"));
     } else if (type === "PE") {
@@ -551,6 +638,7 @@
         });
       });
     }
+
     const label = targetLabel();
     targetFilterLabel.textContent = label;
     replaceOptions(targetFilter, `Select ${label}`, options);
@@ -562,6 +650,7 @@
     "Select Setup Type",
     supportedTypes.map((type) => ({ key: type, label: type }))
   );
+
   if (supportedTypes.length === 1) {
     setupTypeFilter.value = supportedTypes[0];
     setupTypeFilter.disabled = true;
@@ -571,10 +660,12 @@
     refreshTargets();
     fetchStatsData();
   });
+
   setupTypeFilter.addEventListener("change", () => {
     refreshTargets();
     fetchStatsData();
   });
+
   targetFilter.addEventListener("change", fetchStatsData);
   pointDetailsClear.addEventListener("click", closePointDetails);
 
