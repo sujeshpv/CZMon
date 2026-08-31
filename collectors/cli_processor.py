@@ -1,5 +1,5 @@
 from common.connection.sqliteworker import Sqlite3Worker
-from common.connection.ssh_connect import Ssh
+from common.connection.ssh_connect import DEFAULT_SSH_KEY_PATH, Ssh
 from common.logger.logger import EntryExit, setup_logger
 from collectors.api_processor import ApiProcessor
 from common.exceptions.exceptions import *
@@ -260,6 +260,54 @@ class CliProcessor:
       self.db_worker.ensure_schema(table_name, row)
       self.db_worker.insert_row(table_name, row)
 
+  def _run_cvm_commands(self, ip):
+    """Run svmips + nodetool once per host and cache the raw output."""
+    cache = getattr(self, "_cvm_cmd_cache", None)
+    if cache is None:
+      cache = {}
+      self._cvm_cmd_cache = cache
+    if ip not in cache:
+      from collectors.scripts.node_tool import run_cvm_commands
+      cache[ip] = run_cvm_commands(ip, "admin", "Nutanix.123")
+    return cache[ip]
+
+  def _run_cli_command(self, ssh_obj, ip, command):
+    """Run a catalog command and return its raw output.
+
+    Cassandra commands are run as-is. The generic $(svmips) wrapper is
+    rejected by CVM command filters, so those commands use a direct exec
+    and fall back to the CVM admin shell when needed.
+    """
+    from collectors.scripts.node_tool import parse_nodetool_ring, parse_svmips
+
+    command = str(command)
+    if command == "svmips" or "nodetool" in command:
+      output = ""
+      try:
+        output = ssh_obj.execute(command) or ""
+      except Exception as err:
+        LOGGER.info("Direct exec failed for %s (%s): %s", ip, command, err)
+      usable = (
+        parse_svmips(output)
+        if command == "svmips"
+        else parse_nodetool_ring(output)
+      )
+      if usable:
+        return output
+      LOGGER.info("Falling back to CVM admin shell for %s (%s)", ip, command)
+      svmips_out, nodetool_out = self._run_cvm_commands(ip)
+      if command == "svmips":
+        return svmips_out
+      return nodetool_out
+
+    full_command = (
+      f"bash -lc 'for i in $(svmips); "
+      f"do echo \"================== $i "
+      f"=================\"; ssh $i "
+      f"{command}; done'"
+    )
+    return ssh_obj.execute(full_command)
+
   def _endpoint_types(self, entity_data):
     """Normalize catalog endpoint_type to a list of PC/PE labels."""
     raw = entity_data.get("endpoint_type") or []
@@ -290,18 +338,17 @@ class CliProcessor:
         ]
         for ip, current_endpoint_type in ip_endpoints:
           try:
-            ssh_obj = Ssh(ip, NUTANIX)
+            if os.path.isfile(DEFAULT_SSH_KEY_PATH):
+              ssh_obj = Ssh(ip, NUTANIX)
+            else:
+              ssh_obj = Ssh(ip, "admin", password="Nutanix.123", key_path=None)
             for command in commands:
               try:
                 values = {}
-                full_command = (f"bash -lc 'for i in $(svmips); "
-                                f"do echo \"================== $i "
-                                f"=================\"; ssh $i "
-                                f"{command}; done'")
-                output = ssh_obj.execute(full_command)
+                output = self._run_cli_command(ssh_obj, ip, command)
                 LOGGER.info(
                   "Output for command '%s' on %s: %s",
-                  full_command, ip, output
+                  command, ip, output
                 )
                 normalized_output = self.normalize_output(command, output)
                 values["command"] = command

@@ -51,6 +51,8 @@ class Ssh:
       self.remote_ip = remote_ip
       self.username = username
       self.password = password
+      if key_path and not os.path.isfile(key_path):
+        key_path = None
       self.key_path = key_path
       self.ssh_handle = None
       self._connect_with_retry()
