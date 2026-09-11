@@ -1,5 +1,6 @@
 from collectors.api_processor import ApiProcessor
 from collectors.cli_processor import CliProcessor
+from collectors.local_processor import run_local_commands
 from common.logger.logger import EntryExit, setup_logger
 from common.exceptions.exceptions import *
 from library.const import *
@@ -68,9 +69,9 @@ class Runner:
       )
       parser.add_argument(
           "--run-type",
-          help="Run type must be either 'api' or 'cli'",
+          help=f"Run type must be one of: {', '.join(RUN_TYPE_CHOICES)}",
           required=True,
-          choices=["api", "cli"]
+          choices=RUN_TYPE_CHOICES
       )
       self.args = parser.parse_args()
       return self.args
@@ -164,6 +165,9 @@ class Runner:
           )
           thread.start()
           threads.append(thread)
+      # Local CLI Execution
+      if self.args.run_type.lower() == LOCAL_CLI:
+        run_local_commands()
       for thread in threads:
         thread.join()
       LOGGER.info("All metric processing threads completed")

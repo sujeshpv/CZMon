@@ -3,5 +3,11 @@
     "description": "df -h on each PE (fan-out to all SVMs via svmips) and on each PC (run directly).",
     "command": ["df -h"],
     "endpoint_type": ["PE", "PC"]
+  },
+
+  "cassandra_node_consistency": {
+    "description": "Runs nodetool ring to verify Cassandra consistency",
+    "command": ["nodetool -h 0 ring"],
+    "endpoint_type": "PE"
   }
 }

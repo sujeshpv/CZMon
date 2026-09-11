@@ -3,9 +3,12 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.conf import settings as dj_settings
 from django.http import JsonResponse
+from django.template import TemplateDoesNotExist
+from django.template.loader import get_template
 from urllib.parse import quote_plus
 from library.const import *
 import json
+import math
 import os
 import re
 import ipaddress
@@ -1366,3 +1369,389 @@ def settings_view(request):
         "level": level,
     }
     return render(request, "settings.html", ctx)
+
+def _load_stats_registry():
+  """Load and validate the config-driven Stats page registry."""
+  registry_path = os.path.join(
+    dj_settings.BASE_DIR, "static", "configurations", "stats_registry.json"
+  )
+  with open(registry_path, "r", encoding="utf-8") as registry_file:
+    raw_registry = json.load(registry_file)
+
+  if not isinstance(raw_registry, dict):
+    raise ValueError("The stats registry must be a JSON object.")
+
+  registry = {}
+  required_fields = {"name", "table_name", "summary", "page"}
+  for stat_key, config in raw_registry.items():
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(stat_key)):
+      raise ValueError(f"Invalid stat key: {stat_key}")
+    if not isinstance(config, dict):
+      raise ValueError(f"Configuration for '{stat_key}' must be an object.")
+
+    missing = required_fields.difference(config)
+    if missing:
+      raise ValueError(
+        f"Configuration for '{stat_key}' is missing: {', '.join(sorted(missing))}"
+      )
+
+    table_name = str(config["table_name"])
+    page = str(config["page"])
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table_name):
+      raise ValueError(f"Invalid table name configured for '{stat_key}'.")
+    if not page.startswith("stats_pages/") or not page.endswith(".html") or ".." in page:
+      raise ValueError(f"Invalid page configured for '{stat_key}'.")
+
+    try:
+      get_template(page)
+    except TemplateDoesNotExist as error:
+      raise ValueError(f"Page configured for '{stat_key}' does not exist: {page}") from error
+
+    registry[str(stat_key)] = config
+
+  return registry
+
+
+def stats_view(request):
+  """Render the generic Stats selector and its configured stats page."""
+  ctx = _build_overview_context()
+  ctx["stats_target_names"] = _load_stats_target_names()
+  ctx["stats_registry"] = {}
+  ctx["selected_stat_key"] = ""
+  ctx["selected_stat"] = None
+
+  try:
+    registry = _load_stats_registry()
+    ctx["stats_registry"] = registry
+    selected_key = (request.GET.get("stat") or "").strip()
+    if selected_key:
+      if selected_key not in registry:
+        ctx["selection_error"] = "The selected stat is not configured."
+      else:
+        ctx["selected_stat_key"] = selected_key
+        ctx["selected_stat"] = registry[selected_key]
+  except (OSError, ValueError, json.JSONDecodeError) as error:
+    ctx["registry_error"] = str(error)
+
+  return render(request, "stats.html", ctx)
+
+
+def _load_stats_target_names():
+  """Resolve friendly PC and PE names from the latest collected data."""
+  db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
+  names = {}
+  if not os.path.exists(db_path):
+    return names
+
+  try:
+    with sqlite3.connect(db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      tables = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+      }
+
+      if "clusters" in tables:
+        for row in conn.execute(
+          """
+          SELECT name, clusterExternalIPAddress
+          FROM clusters
+          WHERE name IS NOT NULL AND clusterExternalIPAddress IS NOT NULL
+          ORDER BY created_at DESC
+          """
+        ):
+          names.setdefault(str(row["clusterExternalIPAddress"]), str(row["name"]))
+
+      payload_sources = (
+        ("check_vm_power_states", "vm"),
+        ("check_ahv_home_usage", "ahv"),
+      )
+      for table_name, payload_type in payload_sources:
+        if table_name not in tables:
+          continue
+        rows = conn.execute(
+          f"""
+          SELECT ip_address, status_data
+          FROM "{table_name}"
+          ORDER BY created_at DESC
+          """
+        )
+        for row in rows:
+          ip = str(row["ip_address"] or "").strip()
+          if not ip or ip in names:
+            continue
+          try:
+            payload = json.loads(row["status_data"] or "{}")
+          except (TypeError, json.JSONDecodeError):
+            continue
+          if not isinstance(payload, dict):
+            continue
+          if payload_type == "vm":
+            name = payload.get("Cluster_name")
+          else:
+            name = next(iter(payload), None)
+          if name:
+            names[ip] = str(name)
+  except sqlite3.Error:
+    return names
+
+  return names
+
+
+def _stats_number(value, default=0):
+  """Convert collector values to a finite chart number."""
+  try:
+    number = float(str(value).replace("%", "").strip())
+    return number if math.isfinite(number) else default
+  except (TypeError, ValueError):
+    return default
+
+
+def _normalize_stats_payload(stat_key, payload):
+  """Build chart values, a concise summary, and complete point details."""
+  if not isinstance(payload, dict):
+    return {
+      "values": {},
+      "summary": "The collector returned an unsupported payload.",
+      "details": payload,
+      "error": True,
+    }
+
+  if payload.get("error"):
+    return {
+      "values": {},
+      "summary": str(payload["error"]),
+      "details": payload,
+      "error": True,
+    }
+
+  if stat_key == "ahv_partition_usage":
+    usages = []
+    host_count = 0
+    partition_count = 0
+    cluster_names = []
+    for cluster_name, hosts in payload.items():
+      cluster_names.append(str(cluster_name))
+      if not isinstance(hosts, list):
+        continue
+      for host_entry in hosts:
+        if not isinstance(host_entry, dict):
+          continue
+        for _, partitions in host_entry.items():
+          host_count += 1
+          if not isinstance(partitions, dict):
+            continue
+          for _, partition in partitions.items():
+            if isinstance(partition, dict) and "usage" in partition:
+              usages.append(_stats_number(partition.get("usage")))
+              partition_count += 1
+    usage = max(usages) if usages else 0
+    cluster = ", ".join(cluster_names) or "Cluster"
+    return {
+      "values": {"usage": usage},
+      "summary": (
+        f"{cluster}: maximum partition usage {usage:g}% across "
+        f"{host_count} host(s) and {partition_count} partition(s)."
+      ),
+      "details": payload,
+    }
+
+  if stat_key == "pgw_status":
+    online = bool(payload.get("is_online"))
+    summary = f"Prism Gateway is {'ON' if online else 'OFF'}."
+    if payload.get("error_message"):
+      summary += f" {payload['error_message']}"
+    return {
+      "values": {"status": 1 if online else 0},
+      "summary": summary,
+      "details": payload,
+    }
+
+  if stat_key == "vm_power_states":
+    powered_on = powered_off = affinity = 0
+    for key, value in payload.items():
+      if key == "Cluster_name" or not isinstance(value, dict):
+        continue
+      powered_on += int(_stats_number(value.get("powered_on")))
+      powered_off += int(_stats_number(value.get("powered_off")))
+      affinity += int(_stats_number(value.get("affinity_enabled_count")))
+    return {
+      "values": {
+        "powered_on": powered_on,
+        "powered_off": powered_off,
+        "affinity": affinity,
+      },
+      "summary": (
+        f"{payload.get('Cluster_name') or 'Cluster'}: {powered_on} powered on, "
+        f"{powered_off} powered off, {affinity} affinity VM(s)."
+      ),
+      "details": payload,
+    }
+
+  if stat_key == "task_monitor":
+    values = {
+      "pending": len(payload.get("Pending", []))
+      if isinstance(payload.get("Pending"), list) else 0,
+      "failed": len(payload.get("Failed", []))
+      if isinstance(payload.get("Failed"), list) else 0,
+    }
+    total = sum(values.values())
+    return {
+      "values": values,
+      "summary": (
+        f"Total {total} monitored tasks: {values['pending']} pending, "
+        f"{values['failed']} failed."
+      ),
+      "details": {"total": total, "counts": values, "tasks": payload},
+    }
+
+  if stat_key == "underutilized_cluster":
+    cpu = _stats_number(payload.get("cpu_usage_percent"))
+    memory = _stats_number(payload.get("memory_usage_percent"))
+    iops = _stats_number(payload.get("iops"))
+    return {
+      "values": {"cpu": cpu, "memory": memory, "iops": iops},
+      "summary": f"CPU: {cpu:g}% | Memory: {memory:g}% | IOPS: {iops:g}",
+      "details": payload,
+    }
+
+  value = len(payload)
+  return {
+    "values": {"value": value},
+    "summary": f"Captured {value} record(s).",
+    "details": payload,
+  }
+
+
+def _configured_stats_ips(endpoint_type):
+  """Return configured endpoint IPs for a PC or PE selector."""
+  endpoint_key = "pcs" if endpoint_type == "PC" else "pes"
+  return {
+    str(item.get("ip") or item.get("virtual_ip") or "").strip()
+    for item in get_endpoints().get(endpoint_key, [])
+    if isinstance(item, dict) and (item.get("ip") or item.get("virtual_ip"))
+  }
+
+
+def stats_data_api(request):
+  """Return data only from a DB table allowlisted in the Stats registry."""
+  stat_key = (request.GET.get("stat") or "").strip()
+  range_key = (request.GET.get("range") or "90d").strip()
+  raw_target = (request.GET.get("target") or "").strip()
+  target = _extract_ipv4(raw_target)
+  endpoint_type = (request.GET.get("endpoint_type") or "").strip().upper()
+  db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
+
+  try:
+    config = _load_stats_registry().get(stat_key)
+  except (OSError, ValueError, json.JSONDecodeError) as error:
+    return JsonResponse({"error": f"Invalid stats registry: {error}"}, status=500)
+
+  if not config:
+    return JsonResponse({"error": "Unknown stat."}, status=400)
+  supported_types = [str(item).upper() for item in config.get("endpoint_types", [])]
+  if endpoint_type and supported_types and endpoint_type not in supported_types:
+    return JsonResponse(
+      {"error": f"{config['name']} does not support {endpoint_type} targets."},
+      status=400,
+    )
+  if raw_target and not target:
+    return JsonResponse({"error": "Target must contain a valid IP address."}, status=400)
+  endpoint_ips = _configured_stats_ips(endpoint_type) if endpoint_type else set()
+  if target and endpoint_ips and target not in endpoint_ips:
+    return JsonResponse(
+      {"error": f"Target {target} is not a configured {endpoint_type} endpoint."},
+      status=400,
+    )
+  if not os.path.exists(db_path):
+    return JsonResponse({"series": []})
+
+  time_map = {
+    "12h": "-12 hours",
+    "24h": "-24 hours",
+    "7d": "-7 days",
+    "30d": "-30 days",
+    "90d": "-90 days",
+  }
+  if range_key not in time_map:
+    return JsonResponse({"error": "Unsupported time range."}, status=400)
+  time_modifier = time_map[range_key]
+  table_name = config["table_name"]
+  data_points = []
+
+  try:
+    with sqlite3.connect(db_path) as conn:
+      conn.row_factory = sqlite3.Row
+      cursor = conn.cursor()
+      table_exists = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+      ).fetchone()
+      if not table_exists:
+        return JsonResponse({"series": []})
+
+      columns = {
+        row["name"] for row in cursor.execute(f'PRAGMA table_info("{table_name}")')
+      }
+      if "created_at" not in columns:
+        return JsonResponse(
+          {"error": f"Configured table '{table_name}' has no created_at column."},
+          status=500,
+        )
+
+      where = ["created_at >= datetime('now', ?)"]
+      params = [time_modifier]
+      if target and "ip_address" in columns:
+        where.append("ip_address = ?")
+        params.append(target)
+      elif endpoint_type and "ip_address" in columns:
+        if endpoint_ips:
+          placeholders = ", ".join("?" for _ in endpoint_ips)
+          where.append(f"ip_address IN ({placeholders})")
+          params.extend(sorted(endpoint_ips))
+        else:
+          where.append("1 = 0")
+
+      query = f"""
+        SELECT * FROM "{table_name}"
+        WHERE {' AND '.join(where)}
+        ORDER BY created_at DESC
+        LIMIT 100
+      """
+      rows = cursor.execute(query, params).fetchall()
+
+      for row in rows:
+        row_dict = dict(row)
+        ip = (
+          row_dict.get("ip_address")
+          or row_dict.get("cluster_name")
+          or row_dict.get("ip")
+          or "Unknown"
+        )
+        raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
+        if isinstance(raw_data, (dict, list)):
+          payload = raw_data
+        else:
+          try:
+            payload = json.loads(raw_data)
+          except (TypeError, json.JSONDecodeError):
+            payload = {"raw": raw_data}
+
+        data_points.append(
+          {
+            "timestamp": row_dict.get("created_at", "Latest"),
+            "ip": ip,
+            "data": payload,
+            **_normalize_stats_payload(stat_key, payload),
+          }
+        )
+  except sqlite3.Error as error:
+    return JsonResponse({"error": f"Failed loading stats data: {error}"}, status=500)
+
+  return JsonResponse(
+    {
+      "stat": stat_key,
+      "name": config["name"],
+      "endpoint_types": supported_types,
+      "series": data_points[::-1],
+    }
+  )

@@ -1,0 +1,17 @@
+{
+  "snapshot_usage": {
+    "description": "Total snapshot usage in the cluster",
+    "entity_type": "cluster",
+    "endpoint_type": "PE",
+    "api_endpoint": "/PrismGateway/services/rest/v2.0/cluster/",
+    "http_method": "GET",
+    "params": {
+    },
+    "value_paths": [
+      {
+        "alias": "snapshot_reclaimable_bytes",
+        "path": "usage_stats.\"storage.snapshot_reclaimable_bytes\""
+      }
+    ]
+  }
+}

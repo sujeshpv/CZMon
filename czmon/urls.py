@@ -1,6 +1,5 @@
 """
 URL configuration for czmon project.
-
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/4.2/topics/http/urls/
 Examples:
@@ -30,4 +29,8 @@ urlpatterns = [
     path("cluster-metrics/", core_views.cluster_metrics_view, name="cluster_metrics"),
     path("", core_views.dashboard, name="home"),
     path("pe/", RedirectView.as_view(pattern_name="home", permanent=True), name="pe_redirect"),
+
+    path("stats/", core_views.stats_view, name="stats"),
+    path("api/stats-data/", core_views.stats_data_api, name="stats_data_api"),
 ]
+
