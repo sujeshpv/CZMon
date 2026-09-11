@@ -1,8 +1,8 @@
 {
   "cluster_version": {
-    "description": "List of commands to be executed on the cluster",
+    "description": "df -h on each PE (fan-out to all SVMs via svmips) and on each PC (run directly).",
     "command": ["df -h"],
-    "endpoint_type": "PC"
+    "endpoint_type": ["PE", "PC"]
   },
 
   "cassandra_node_consistency": {
@@ -11,4 +11,3 @@
     "endpoint_type": "PE"
   }
 }
-
