@@ -1,0 +1,7 @@
+{
+  "cluster_version": {
+    "description": "df -h on each PE (fan-out to all SVMs via svmips) and on each PC (run directly).",
+    "command": ["df -h"],
+    "endpoint_type": ["PE", "PC"]
+  }
+}
