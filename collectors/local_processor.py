@@ -8,6 +8,7 @@ and executes them locally on the system, parsing and routing output to the DB.
 import os
 import json
 import subprocess
+import sys
 from common.logger.logger import EntryExit, setup_logger
 from common.exceptions.exceptions import CZMonError
 from common.connection.sqliteworker import Sqlite3Worker
@@ -42,6 +43,47 @@ class LocalProcessor:
       LOGGER.error(error)
       raise error
 
+  def _looks_like_python(self, value):
+    """Return True when a catalog command part names a Python interpreter."""
+    name = os.path.basename(str(value)).lower()
+    return name in {"python", "python3"} or name.startswith("python3.")
+
+  def _resolve_path(self, value):
+    """Resolve a catalog path against this checkout when the stored path is missing."""
+    if os.path.exists(value):
+      return value
+    if os.path.isabs(value):
+      script_candidate = os.path.join(
+        self.base_dir, "collectors", "scripts", os.path.basename(value)
+      )
+      if os.path.exists(script_candidate):
+        return script_candidate
+    relative_candidate = os.path.join(self.base_dir, value)
+    if os.path.exists(relative_candidate):
+      return relative_candidate
+    return value
+
+  def _resolve_command(self, command):
+    """
+    Bind catalog commands to the current repo and interpreter.
+
+    Absolute paths like /home/nutanix/CZMon/... only work on one layout.
+    Missing interpreter or script paths fall back to sys.executable and
+    collectors/scripts under this checkout.
+    """
+    if not command:
+      return []
+
+    parts = list(command)
+    if self._looks_like_python(parts[0]):
+      interpreter = parts[0] if os.path.isfile(parts[0]) else sys.executable
+      rest = parts[1:]
+    else:
+      interpreter = sys.executable
+      rest = parts
+
+    return [interpreter] + [self._resolve_path(part) for part in rest]
+
   @EntryExit
   def process_data(self):
     """
@@ -56,10 +98,11 @@ class LocalProcessor:
       custom_env["PYTHONPATH"] = self.base_dir
 
       for table_name, task_info in catalog.items():
-        command = task_info.get("command", [])
+        command = self._resolve_command(task_info.get("command", []))
         desc = task_info.get("description", "No description")
 
         LOGGER.info(f"Running Task: {table_name} ({desc})")
+        LOGGER.info(f"Resolved command: {command}")
         try:
           result = subprocess.run(
             command,
