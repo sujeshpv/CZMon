@@ -30,7 +30,15 @@ HOST_DF_COMMAND = "df -P -h"
 
 
 def _cvm_usernames(pe_user: str) -> List[str]:
-  """Try the configured PE user, then the CVM nutanix OS user."""
+  """Build a list of usernames to try when SSHing to the CVM.
+  
+  Args:
+    pe_user (str): The configured Prism Element admin username.
+    
+  Returns:
+    List[str]: A list of unique usernames to attempt, with the configured
+      PE user first, followed by the default 'nutanix' OS user.
+  """
   users = []
   for user in (pe_user, "nutanix"):
     if user and user not in users:
@@ -39,7 +47,19 @@ def _cvm_usernames(pe_user: str) -> List[str]:
 
 
 def _parse_df_output(output: str) -> Dict[str, any]:
-  """Parse df -P -h lines into mount-point metrics."""
+  """Parse df -P -h output lines into structured partition metrics.
+  
+  Extracts partition information from POSIX-format df output, capturing
+  the mount point, total size, available space, and usage percentage.
+  
+  Args:
+    output (str): Raw output from 'df -P -h' command.
+    
+  Returns:
+    Dict[str, any]: A dictionary mapping mount points to their metrics.
+      Each entry contains 'total', 'available', and 'usage' keys.
+      Example: {'/': {'total': '100G', 'available': '20G', 'usage': '80%'}}
+  """
   partitions = {}
   for line in (output or "").splitlines():
     parts = line.split()
@@ -171,10 +191,21 @@ def execute_ssh_command(
 def run_command_on_cvm(
   cluster_ip: str, pe_user: str, pe_pass: str, remote_command: str
 ) -> str:
-  """SSH to the SVM and run a command in a login shell.
+  """SSH to the CVM (SVM) and execute a command in a login shell.
 
-  Tries the configured PE user, then nutanix. Uses exec_command first.
-  Falls back to the interactive CVM menu path if that returns nothing.
+  Attempts multiple strategies to run commands on the CVM:
+  1. First tries the configured PE user with bash -lc (exec_command)
+  2. Falls back to the 'nutanix' OS user with bash -lc
+  3. If both fail, retries with interactive CVM menu navigation
+  
+  Args:
+    cluster_ip (str): The virtual IP address of the cluster (CVM target).
+    pe_user (str): The Prism Element admin username.
+    pe_pass (str): The password for authentication.
+    remote_command (str): The command to execute on the CVM.
+    
+  Returns:
+    str: The command output, or empty string if all attempts fail.
   """
   wrapped = f"bash -lc {shlex.quote(remote_command)}"
   last_error = None
@@ -234,7 +265,25 @@ def fetch_usage_data_from_host_via_cvm(
 def get_host_partition_info_via_svm(
   cluster_ip: str, pe_user: str, pe_pass: str, host_ip: str
 ) -> Dict[str, any]:
-  """SSH to the SVM, then SSH from the SVM to one AHV host and run df."""
+  """Collect partition info from a single AHV host via nested SSH through the CVM.
+  
+  This function performs a two-hop SSH connection:
+  1. SSH from CZMon to the CVM
+  2. SSH from the CVM to the target AHV host
+  3. Run 'df -P -h' on the AHV host
+  
+  This approach works on AOS 7.6+ where direct AHV SSH is blocked.
+  
+  Args:
+    cluster_ip (str): The virtual IP address of the cluster (CVM).
+    pe_user (str): The Prism Element admin username.
+    pe_pass (str): The password for authentication.
+    host_ip (str): The IP address of the target AHV host.
+    
+  Returns:
+    Dict[str, any]: A dictionary containing 'partitions' (parsed metrics)
+      and 'raw_output' (complete df output), or an 'error' key if collection fails.
+  """
   nested = (
     "ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
     "-o UserKnownHostsFile=/dev/null -o ConnectTimeout=10 "
