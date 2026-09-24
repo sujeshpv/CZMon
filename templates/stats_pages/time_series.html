@@ -297,71 +297,131 @@
   }
 
   function renderAhvDetails(details) {
-    const clusterName = Object.keys(details || {})[0];
+    const clusterName = Object.keys(details || {}).find(k => !k.startsWith("_"));
     const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
-    const hosts = [];
+    const rawHostsshOutput = details?._raw_hostssh_output;
+    
+    // Collect all hosts and their partitions
+    const hostsData = [];
+    
     entries.forEach((entry) => {
       if (!entry || typeof entry !== "object") return;
-      Object.entries(entry).forEach(([name, partitions]) => {
-        hosts.push({ name, partitions: partitions || {} });
+      Object.entries(entry).forEach(([hostName, hostData]) => {
+        const partitions = hostData?.partitions || hostData || {};
+        const rawOutput = hostData?.raw_output;
+        if (typeof partitions !== "object") return;
+        
+        hostsData.push({ hostName, partitions, rawOutput });
       });
     });
-
+    
     addDetailCards([["Cluster", clusterName || "Unknown"]]);
+    
+    // Add host and partition filter dropdowns
     const selectors = createElement("div", "detail-selectors");
+    
+    // Host dropdown
     const hostLabel = createElement("label", "filter-item");
     hostLabel.appendChild(createElement("span", "filter-label", "AHV Host"));
     const hostSelect = createElement("select", "filter-select");
-    replaceOptions(
-      hostSelect,
-      "Select AHV Host",
-      hosts.map((host) => ({ key: host.name, label: host.name }))
-    );
+    const hostOptions = [
+      { key: "", label: "All Hosts" },
+      ...hostsData.map(h => ({ key: h.hostName, label: h.hostName }))
+    ];
+    replaceOptions(hostSelect, "", hostOptions);
     hostLabel.appendChild(hostSelect);
-
+    selectors.appendChild(hostLabel);
+    
+    // Partition dropdown
     const partitionLabel = createElement("label", "filter-item");
     partitionLabel.appendChild(createElement("span", "filter-label", "Partition"));
     const partitionSelect = createElement("select", "filter-select");
-    replaceOptions(partitionSelect, "Select Partition", []);
     partitionLabel.appendChild(partitionSelect);
-    selectors.append(hostLabel, partitionLabel);
+    selectors.appendChild(partitionLabel);
+    
     pointMetricDetails.appendChild(selectors);
-
-    const selectedDetails = createElement("div");
-    pointMetricDetails.appendChild(selectedDetails);
-    pointMetricDetails.appendChild(
-      createElement("p", "detail-help", "Select an AHV host and partition to view its usage details.")
-    );
-
-    hostSelect.addEventListener("change", () => {
-      selectedDetails.replaceChildren();
-      const host = hosts.find((item) => item.name === hostSelect.value);
-      const partitions = host && typeof host.partitions === "object"
-        ? Object.entries(host.partitions)
-            .filter(([, value]) => value && typeof value === "object")
-            .map(([name]) => name)
-        : [];
-      replaceOptions(partitionSelect, "Select Partition", partitions);
-    });
-    partitionSelect.addEventListener("change", () => {
-      selectedDetails.replaceChildren();
-      const host = hosts.find((item) => item.name === hostSelect.value);
-      const partition = host?.partitions?.[partitionSelect.value];
-      if (!partition || typeof partition !== "object") return;
-      const grid = createElement("div", "metric-detail-grid");
-      [
-        ["Host", host.name],
-        ["Partition", partitionSelect.value],
-        ["Total", partition.total || "N/A"],
-        ["Available", partition.available || "N/A"],
-        ["Usage", partition.usage || "N/A"]
-      ].forEach(([label, value]) => {
-        const card = createElement("div", "metric-detail-card");
-        card.appendChild(createElement("span", "point-meta-label", label));
-        card.appendChild(createElement("span", "metric-detail-value", value));
-        grid.appendChild(card);
+    
+    const tableContainer = createElement("div");
+    tableContainer.style.marginTop = "16px";
+    pointMetricDetails.appendChild(tableContainer);
+    
+    function updatePartitionOptions(selectedHost) {
+      const partitionNames = new Set();
+      
+      hostsData.forEach(({ hostName, partitions }) => {
+        if (selectedHost && hostName !== selectedHost) return;
+        
+        Object.keys(partitions).forEach(mountPoint => {
+          if (partitions[mountPoint] && typeof partitions[mountPoint] === "object") {
+            partitionNames.add(mountPoint);
+          }
+        });
       });
-      selectedDetails.appendChild(grid);
+      
+      const partitionOptions = [
+        { key: "", label: "All Partitions" },
+        ...Array.from(partitionNames).sort().map(p => ({ key: p, label: p }))
+      ];
+      replaceOptions(partitionSelect, "", partitionOptions);
+    }
+    
+    function renderPartitionTable(selectedHost, selectedPartition) {
+      tableContainer.replaceChildren();
+      const rows = [];
+      
+      hostsData.forEach(({ hostName, partitions }) => {
+        // Filter by selected host if specified
+        if (selectedHost && hostName !== selectedHost) return;
+        
+        Object.entries(partitions).forEach(([mountPoint, partition]) => {
+          if (!partition || typeof partition !== "object") return;
+          // Filter by selected partition if specified
+          if (selectedPartition && mountPoint !== selectedPartition) return;
+          
+          rows.push([
+            hostName,
+            mountPoint,
+            partition.total || "N/A",
+            partition.available || "N/A",
+            partition.usage || "N/A"
+          ]);
+        });
+      });
+      
+      if (rows.length > 0) {
+        const table = createElement("table", "metric-detail-table");
+        const headRow = table.createTHead().insertRow();
+        ["AHV Host", "Partition", "Total", "Available", "Usage"].forEach((header) => {
+          headRow.appendChild(createElement("th", "", header));
+        });
+        const body = table.createTBody();
+        rows.forEach((values) => {
+          const row = body.insertRow();
+          values.forEach((value) => {
+            row.appendChild(createElement("td", "", value));
+          });
+        });
+        tableContainer.appendChild(table);
+      } else {
+        tableContainer.appendChild(
+          createElement("p", "detail-help", "No partition data available for the selected filters.")
+        );
+      }
+    }
+    
+    // Initial setup
+    updatePartitionOptions("");
+    renderPartitionTable("", "");
+    
+    // Update partition options and table when host selection changes
+    hostSelect.addEventListener("change", () => {
+      updatePartitionOptions(hostSelect.value);
+      renderPartitionTable(hostSelect.value, partitionSelect.value);
+    });
+    
+    // Update table when partition selection changes
+    partitionSelect.addEventListener("change", () => {
+      renderPartitionTable(hostSelect.value, partitionSelect.value);
     });
   }
 
