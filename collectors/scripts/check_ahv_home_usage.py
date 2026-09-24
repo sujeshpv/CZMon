@@ -192,11 +192,6 @@ def run_command_on_cvm(
   cluster_ip: str, pe_user: str, pe_pass: str, remote_command: str
 ) -> str:
   """SSH to the CVM (SVM) and execute a command in a login shell.
-
-  Attempts multiple strategies to run commands on the CVM:
-  1. First tries the configured PE user with bash -lc (exec_command)
-  2. Falls back to the 'nutanix' OS user with bash -lc
-  3. If both fail, retries with interactive CVM menu navigation
   
   Args:
     cluster_ip (str): The virtual IP address of the cluster (CVM target).
@@ -268,11 +263,9 @@ def get_host_partition_info_via_svm(
   """Collect partition info from a single AHV host via nested SSH through the CVM.
   
   This function performs a two-hop SSH connection:
-  1. SSH from CZMon to the CVM
+  1. SSH to the CVM
   2. SSH from the CVM to the target AHV host
   3. Run 'df -P -h' on the AHV host
-  
-  This approach works on AOS 7.6+ where direct AHV SSH is blocked.
   
   Args:
     cluster_ip (str): The virtual IP address of the cluster (CVM).
