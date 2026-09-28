@@ -330,7 +330,7 @@ def run_vm_sanity(config_path: str = None) -> None:
     except Exception as e:
       logger.error(f"Sanity Error on {name}: {e}")
 
-    final_results[name] = status
+    final_results[ip_addr] = status
 
   print(json.dumps(final_results, indent=2))
 

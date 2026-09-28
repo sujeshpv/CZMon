@@ -129,7 +129,35 @@
     "datasets": [
       {"key": "status", "label": "No Crashes", "color": "#dc3545", "axis": "y", "stepped": true}
     ]
-  }
+  },
+
+ "vm_crud_sanity": {
+  "name": "VM CRUD Sanity",
+  "table_name": "vm_crud_sanity",
+  "summary": "Verifies VM create, update, and delete operations.",
+  "page": "stats_pages/time_series.html",
+  "parser": "vm_crud_sanity",
+  "chart_type": "line",
+  "y_axis": "Result",
+  "is_percentage": false,
+  "status_axis": true,
+  "status_labels": {
+    "1": "PASS",
+    "0": "FAIL"
+  },
+  "endpoint_types": ["PC"],
+  "target_labels": {"PC": "Prism Central"},
+  "datasets": [
+    {
+      "key": "status",
+      "label": "VM CRUD Status",
+      "color": "#1769b0",
+      "axis": "y",
+      "stepped": true
+    }
+  ]
+}
+
 
 
 }
