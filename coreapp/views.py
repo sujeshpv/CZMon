@@ -1615,6 +1615,21 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "ssh_connections":
+    highest = int(_stats_number(payload.get("highest_established")))
+    total = int(
+      _stats_number(payload.get("total_established"), default=highest)
+    )
+    status = payload.get("status") or "UNKNOWN"
+    return {
+      "values": {"highest_established": highest, "total": total},
+      "summary": (
+        f"SSH ESTABLISHED: highest {highest} per CVM | "
+        f"cluster total {total} | status {status}."
+      ),
+      "details": payload,
+    }
+
   value = len(payload)
   return {
     "values": {"value": value},

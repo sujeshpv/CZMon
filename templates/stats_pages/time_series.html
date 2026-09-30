@@ -296,6 +296,26 @@
     pointMetricDetails.appendChild(logCard);
   }
 
+  function renderSshConnectionDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+
+    addDetailCards([
+      ["Status", parsedData?.status || "Unknown"],
+      ["Highest per CVM", Number(parsedData?.highest_established || 0)],
+      ["Cluster total", Number(parsedData?.total_established || 0)]
+    ]);
+    if (parsedData?.error) {
+      addDetailCards([["Error", parsedData.error]]);
+    }
+
+    const perCvm = parsedData?.per_cvm || {};
+    const cvmRows = Object.entries(perCvm)
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .map(([ip, count]) => [ip, Number(count)]);
+    addDetailTable(["CVM", "ESTABLISHED SSH"], cvmRows);
+  }
+
   function renderAhvDetails(details) {
     const clusterName = Object.keys(details || {}).find(k => !k.startsWith("_"));
     const entries = Array.isArray(details?.[clusterName]) ? details[clusterName] : [];
@@ -512,6 +532,7 @@
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
+    else if (config.parser === "ssh_connections") renderSshConnectionDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;

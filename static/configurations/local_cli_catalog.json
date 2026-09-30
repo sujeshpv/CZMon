@@ -27,6 +27,10 @@
     "description": "Audits clusters for SIGSEGV crashes",
     "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/node_check_crash.py"]
   },
+  "check_ssh_connections": {
+    "description": "Counts ESTABLISHED SSH connections on port 22 across CVMs via allssh/ss",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_ssh_connections.py"]
+  },
   "node_tool": {
     "description": "Verifies Cassandra ring consistency",
     "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/node_tool.py"]
@@ -34,9 +38,9 @@
   "vm_crud": {
     "description": "Performs VM Create, Update, Delete sanity checks",
     "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/vm_crud.py"]
-  },  
+  },
   "snapshot_usage_tracker": {
-  "description": "Tracks Recovery Point storage usage percentages",
-  "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
+    "description": "Tracks Recovery Point storage usage percentages",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
   }
 }
