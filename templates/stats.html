@@ -46,6 +46,9 @@
     {{ selected_stat|json_script:"selected-stat-config" }}
     {{ az_to_pcs|json_script:"stats-az-to-pcs" }}
     {{ pc_to_pes|json_script:"stats-pc-to-pes" }}
+    {% if selected_stat.target_source == "az_pes" %}
+      {{ stats_az_to_pes|json_script:"stats-az-to-pes" }}
+    {% endif %}
     {{ stats_target_names|json_script:"stats-target-names" }}
     {% include selected_stat.page %}
   {% else %}

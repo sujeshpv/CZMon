@@ -7,6 +7,7 @@ from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from urllib.parse import quote_plus
 from library.const import *
+from collectors.curator_full_scan import scan_status_category
 import json
 import math
 import os
@@ -181,8 +182,9 @@ def get_endpoints():
                 ip = entry.get("ip") or entry.get("virtual_ip") or ""
                 pc_name = (entry.get("pc_name") or entry.get("pc") or "").strip()
                 pc_ip = (entry.get("pc_ip") or "").strip()
+                az = (entry.get("az") or "").strip()
                 normalized_pes.append(
-                    {"name": name, "ip": ip, "pc_name": pc_name, "pc_ip": pc_ip}
+                    {"name": name, "ip": ip, "pc_name": pc_name, "pc_ip": pc_ip, "az": az}
                 )
     pes = normalized_pes
 
@@ -1407,9 +1409,73 @@ def _load_stats_registry():
     except TemplateDoesNotExist as error:
       raise ValueError(f"Page configured for '{stat_key}' does not exist: {page}") from error
 
+    if config.get("cli_catalog_entry"):
+      config = {
+        **config,
+        "endpoint_types": _cli_catalog_endpoint_types(config["cli_catalog_entry"]),
+      }
+
     registry[str(stat_key)] = config
 
   return registry
+
+
+def _cli_catalog_endpoint_types(entry_name):
+  """Return the endpoint types a cli_metrics_catalog.json entry executes on."""
+  catalog_path = os.path.join(
+    dj_settings.BASE_DIR, STATIC, CONFIGURE, CLI_METRICS_CATALOG_JSON
+  )
+  with open(catalog_path, "r", encoding="utf-8") as catalog_file:
+    catalog = json.load(catalog_file)
+  entry = catalog.get(entry_name)
+  if not isinstance(entry, dict):
+    raise ValueError(f"CLI catalog entry '{entry_name}' is not configured.")
+  endpoint_types = entry.get("endpoint_type") or []
+  if isinstance(endpoint_types, str):
+    endpoint_types = [endpoint_types]
+  return [str(item).strip().upper() for item in endpoint_types if str(item).strip()]
+
+
+def _stats_table_target_names(table_name):
+  """Map target IPs to the latest cluster name recorded in a stats table."""
+  db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
+  names = {}
+  if not os.path.exists(db_path):
+    return names
+  try:
+    with sqlite3.connect(db_path) as conn:
+      columns = {row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')}
+      if not {"ip", "cluster_name", "created_at"} <= columns:
+        return names
+      rows = conn.execute(
+        f"""
+        SELECT ip, cluster_name FROM "{table_name}"
+        WHERE ip IS NOT NULL AND cluster_name IS NOT NULL AND cluster_name != ''
+        ORDER BY created_at DESC
+        """
+      )
+      for ip, name in rows:
+        names.setdefault(str(ip).strip(), str(name))
+  except sqlite3.Error:
+    return {}
+  return names
+
+
+def _stats_az_to_pes(endpoints):
+  """Map every AZ to the PEs configured in it, independent of any PC."""
+  az_to_pes = {}
+  for pe in endpoints.get("pes", []):
+    az = str(pe.get("az") or "").strip()
+    name = str(pe.get("name") or "").strip()
+    ip = str(pe.get("ip") or "").strip()
+    if not az or not ip:
+      continue
+    display = f"{name} ({ip})" if name and name != ip else ip
+    if display not in az_to_pes.setdefault(az, []):
+      az_to_pes[az].append(display)
+  return {
+    az: sorted(pes, key=str.lower) for az, pes in sorted(az_to_pes.items())
+  }
 
 
 def stats_view(request):
@@ -1430,6 +1496,14 @@ def stats_view(request):
       else:
         ctx["selected_stat_key"] = selected_key
         ctx["selected_stat"] = registry[selected_key]
+        if registry[selected_key].get("target_source") == "az_pes":
+          az_to_pes = _stats_az_to_pes(get_endpoints())
+          ctx["azs"] = list(az_to_pes)
+          ctx["stats_az_to_pes"] = az_to_pes
+          ctx["stats_target_names"] = {
+            **_stats_table_target_names(registry[selected_key]["table_name"]),
+            **ctx["stats_target_names"],
+          }
   except (OSError, ValueError, json.JSONDecodeError) as error:
     ctx["registry_error"] = str(error)
 
@@ -1605,6 +1679,35 @@ def _normalize_stats_payload(stat_key, payload):
       "details": {"total": total, "counts": values, "tasks": payload},
     }
 
+  if stat_key == "curator_full_scan":
+    full_scan = payload.get("full_scan") or {}
+    command_result = payload.get("command_result") or {}
+    collection_status = payload.get("collection_status") or "unknown"
+    availability = "available" if payload.get("full_scan_available") else "unavailable"
+    scan_status = scan_status_category(full_scan.get("status_raw"))
+    summary = (
+      f"Scan status: {scan_status} | Collection {collection_status} | Parsed status: "
+      f"{full_scan.get('status') or 'n/a'} | Raw status: "
+      f"{full_scan.get('status_raw') or 'n/a'} | Command: "
+      f"{payload.get('command_execution_status') or 'unknown'} (exit "
+      f"{command_result.get('exit_code')}) | Full Scan {availability}"
+    )
+    messages = [
+      str(issue.get("message"))
+      for issue in payload.get("errors") or []
+      if isinstance(issue, dict) and issue.get("message")
+    ]
+    if messages:
+      summary += " | " + " ".join(messages)
+    result = {
+      "values": {"scan_status": scan_status},
+      "summary": summary,
+      "details": payload,
+    }
+    if collection_status != "success":
+      result["error"] = True
+    return result
+
   if stat_key == "underutilized_cluster":
     cpu = _stats_number(payload.get("cpu_usage_percent"))
     memory = _stats_number(payload.get("memory_usage_percent"))
@@ -1677,6 +1780,10 @@ def stats_data_api(request):
     return JsonResponse({"error": "Unsupported time range."}, status=400)
   time_modifier = time_map[range_key]
   table_name = config["table_name"]
+  try:
+    max_points = max(1, int(config.get("max_points", 100)))
+  except (TypeError, ValueError):
+    max_points = 100
   data_points = []
 
   try:
@@ -1700,13 +1807,16 @@ def stats_data_api(request):
 
       where = ["created_at >= datetime('now', ?)"]
       params = [time_modifier]
-      if target and "ip_address" in columns:
-        where.append("ip_address = ?")
+      target_column = next(
+        (column for column in ("ip_address", "ip") if column in columns), None
+      )
+      if target and target_column:
+        where.append(f"{target_column} = ?")
         params.append(target)
-      elif endpoint_type and "ip_address" in columns:
+      elif endpoint_type and target_column:
         if endpoint_ips:
           placeholders = ", ".join("?" for _ in endpoint_ips)
-          where.append(f"ip_address IN ({placeholders})")
+          where.append(f"{target_column} IN ({placeholders})")
           params.extend(sorted(endpoint_ips))
         else:
           where.append("1 = 0")
@@ -1715,9 +1825,9 @@ def stats_data_api(request):
         SELECT * FROM "{table_name}"
         WHERE {' AND '.join(where)}
         ORDER BY created_at DESC
-        LIMIT 100
+        LIMIT ?
       """
-      rows = cursor.execute(query, params).fetchall()
+      rows = cursor.execute(query, params + [max_points]).fetchall()
 
       for row in rows:
         row_dict = dict(row)

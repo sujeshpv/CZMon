@@ -129,6 +129,33 @@
     "datasets": [
       {"key": "status", "label": "No Crashes", "color": "#dc3545", "axis": "y", "stepped": true}
     ]
+  },
+
+  "curator_full_scan": {
+    "name": "Curator Full Scan",
+    "table_name": "curator_full_scan",
+    "summary": "Curator Full Scan results collected over the last 90 days for each PE cluster, with the complete curator_cli response.",
+    "page": "stats_pages/time_series.html",
+    "parser": "curator_full_scan",
+    "chart_type": "bar",
+    "y_axis": "Full Scan Status",
+    "is_percentage": false,
+    "status_levels": ["Succeeded", "Running", "Failed", "Canceled", "UnknownStatus"],
+    "status_colors": {
+      "Succeeded": "#218838",
+      "Running": "#1769b0",
+      "Failed": "#c82333",
+      "Canceled": "#fd7e14",
+      "UnknownStatus": "#6c757d"
+    },
+    "require_target": true,
+    "max_points": 200,
+    "cli_catalog_entry": "curator_full_scan",
+    "target_source": "az_pes",
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "scan_status", "label": "Full Scan Status", "color": "#1769b0", "axis": "y"}
+    ]
   }
 
 

@@ -92,6 +92,8 @@
   const config = JSON.parse(document.getElementById("selected-stat-config").textContent);
   const azToPcs = JSON.parse(document.getElementById("stats-az-to-pcs").textContent);
   const pcToPes = JSON.parse(document.getElementById("stats-pc-to-pes").textContent);
+  const azToPesElement = document.getElementById("stats-az-to-pes");
+  const azToPes = azToPesElement ? JSON.parse(azToPesElement.textContent) : {};
   const targetNames = JSON.parse(document.getElementById("stats-target-names").textContent);
   const status = document.getElementById("statsStatus");
   const azFilter = document.getElementById("azFilter");
@@ -109,6 +111,33 @@
   }];
   let currentRange = "90d";
   let pointRecords = [];
+  const statusLevels = Array.isArray(config.status_levels) ? config.status_levels : null;
+
+  function statusLevelValue(label) {
+    const index = statusLevels ? statusLevels.indexOf(label) : -1;
+    return index === -1 ? null : statusLevels.length - index;
+  }
+
+  function statusLevelLabel(value) {
+    const index = statusLevels ? statusLevels.length - Number(value) : -1;
+    return index >= 0 && index < statusLevels.length ? statusLevels[index] : "";
+  }
+
+  function formatLocalTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleString([], {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+  }
+
+  function curatorEndTimeLabel(item) {
+    const fullScan = item.data?.full_scan || {};
+    if (fullScan.end_time) return formatLocalTime(fullScan.end_time);
+    if (fullScan.end_time_raw) return `${fullScan.end_time_raw} (cluster time)`;
+    return `${formatLocalTime(item.timestamp)} (collected, no Full Scan)`;
+  }
 
   function chartScales() {
     const scales = {
@@ -123,6 +152,15 @@
         title: { display: true, text: config.y_axis || "Value" }
       }
     };
+    if (statusLevels) {
+      scales.y.min = 0;
+      scales.y.max = statusLevels.length;
+      scales.y.ticks = {
+        stepSize: 1,
+        autoSkip: false,
+        callback: (value) => statusLevelLabel(value)
+      };
+    }
     if (config.status_axis) {
       scales.y.ticks = {
         stepSize: 1,
@@ -172,6 +210,9 @@
         tooltip: {
           callbacks: {
             label(context) {
+              if (statusLevels) {
+                return `${context.dataset.label}: ${statusLevelLabel(context.raw)}`;
+              }
               if (config.status_axis) {
                 return `${context.dataset.label}: ${Number(context.raw) === 1 ? "ON" : "OFF"}`;
               }
@@ -487,6 +528,54 @@
     ]);
   }
 
+  function addPreformattedCard(label, text) {
+    const card = createElement("div", "metric-detail-card");
+    card.style.marginTop = "14px";
+    card.appendChild(createElement("span", "point-meta-label", label));
+    const pre = createElement("pre", "");
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.fontSize = "12px";
+    pre.textContent = text;
+    card.appendChild(pre);
+    pointMetricDetails.appendChild(card);
+  }
+
+  function renderCuratorDetails(details) {
+    const fullScan = details?.full_scan || {};
+    const result = details?.command_result || {};
+    const show = (value) => (value === null || value === undefined || value === "" ? "N/A" : value);
+    addDetailCards([
+      ["Collection Status", show(details?.collection_status)],
+      ["Command Execution", `${show(details?.command_execution_status)} (exit ${show(result.exit_code)})`],
+      ["Full Scan Available", details?.full_scan_available ? "Yes" : "No"],
+      ["Parsed Status", show(fullScan.status)],
+      ["Raw Status", show(fullScan.status_raw)],
+      ["Execution Id", show(fullScan.execution_id)]
+    ]);
+    addDetailTable(["Field", "Value"], [
+      ["Cluster", `${show(details?.cluster_name)} (${show(details?.cluster_ip)})`],
+      ["Cluster Id", show(details?.cluster_id)],
+      ["Collected At (local)", details?.collected_at ? formatLocalTime(details.collected_at) : "N/A"],
+      ["Command", show(details?.command)],
+      ["Job Name", show(fullScan.job_name)],
+      ["Job Id", show(fullScan.job_id)],
+      ["Master Handle", show(fullScan.master_handle)],
+      ["Incarnation Id", show(fullScan.incarnation_id)],
+      ["Start Time (raw)", show(fullScan.start_time_raw)],
+      ["End Time (raw)", show(fullScan.end_time_raw)],
+      ["Start Time (local)", fullScan.start_time ? formatLocalTime(fullScan.start_time) : "N/A"],
+      ["End Time (local)", fullScan.end_time ? formatLocalTime(fullScan.end_time) : "N/A"],
+      ["Start Time (UTC)", show(fullScan.start_time)],
+      ["End Time (UTC)", show(fullScan.end_time)],
+      ["Timestamp Timezone", show(fullScan.timestamp_timezone)]
+    ]);
+    const issues = [...(details?.errors || []).map((issue) => ["Error", issue.code, issue.message, issue.action]),
+      ...(details?.warnings || []).map((issue) => ["Warning", issue.code, issue.message, issue.action])];
+    addDetailTable(["Level", "Code", "Message", "Action"], issues);
+    addPreformattedCard("Command Output (stdout)", result.raw_output || "(empty)");
+    addPreformattedCard("Command Error Output (stderr)", result.stderr || "(empty)");
+  }
+
   function renderGenericDetails(details) {
     const rows = Object.entries(details || {}).map(([key, value]) => [
       key.replaceAll("_", " "),
@@ -512,6 +601,7 @@
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
+    else if (config.parser === "curator_full_scan") renderCuratorDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -523,12 +613,28 @@
     pointMetricDetails.replaceChildren();
   }
 
+  function clearChart(message) {
+    pointRecords = [];
+    chart.data.labels = [];
+    chart.data.datasets.forEach((dataset) => { dataset.data = []; });
+    chart.update();
+    closePointDetails();
+    status.hidden = false;
+    status.classList.remove("error");
+    status.textContent = message;
+  }
+
   async function fetchStatsData() {
+    const target = targetFilter.value;
+    if (config.require_target && !target) {
+      clearChart(`Select a ${targetLabel()} to view data.`);
+      return;
+    }
+
     status.hidden = false;
     status.classList.remove("error");
     status.textContent = "Loading data…";
 
-    const target = targetFilter.value;
     const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
     if (target) params.set("target", target);
     if (setupTypeFilter.value) params.set("endpoint_type", setupTypeFilter.value);
@@ -549,6 +655,10 @@
       closePointDetails();
 
       series.forEach((item) => {
+        if (config.parser === "curator_full_scan") {
+          labels.push(curatorEndTimeLabel(item));
+          return;
+        }
         const date = new Date(item.timestamp);
         labels.push(currentRange.endsWith("h")
           ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -561,6 +671,10 @@
       chart.data.datasets.forEach((dataset, index) => {
         const key = datasetConfig[index].key;
         dataset.data = series.map((item) => {
+
+          if (statusLevels) {
+            return statusLevelValue((item.values || {})[key]);
+          }
 
           if (config.parser === "snapshot_usage") {
             let parsedData = item.data;
@@ -592,6 +706,17 @@
             : null;
         });
       });
+
+      if (config.status_colors) {
+        chart.data.datasets.forEach((dataset, index) => {
+          const key = datasetConfig[index].key;
+          const colors = series.map((item) =>
+            config.status_colors[(item.values || {})[key]] || datasetConfig[index].color
+          );
+          dataset.backgroundColor = colors;
+          dataset.borderColor = colors;
+        });
+      }
 
       const hasNonZeroData = chart.data.datasets.some((dataset) =>
         dataset.data.some((value) => Number(value) !== 0)
@@ -638,6 +763,8 @@
     let options = [];
     if (type === "PC") {
       options = pcs.map((pc) => formatTargetOption(pc, "PC"));
+    } else if (type === "PE" && config.target_source === "az_pes") {
+      options = (azToPes[azFilter.value] || []).map((pe) => formatTargetOption(pe, "PE"));
     } else if (type === "PE") {
       const seen = new Set();
       pcs.forEach((pc) => {

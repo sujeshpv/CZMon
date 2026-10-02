@@ -9,5 +9,16 @@
     "description": "Runs nodetool ring to verify Cassandra consistency",
     "command": ["nodetool -h 0 ring"],
     "endpoint_type": "PE"
+  },
+
+  "curator_full_scan": {
+    "description": "Last successful Curator Full Scan per PE cluster; curator_cli is cluster-wide so it runs once per cluster instead of on every SVM.",
+    "command": ["curator_cli get_last_successful_scans"],
+    "endpoint_type": ["PE"],
+    "fan_out": false,
+    "parser": "curator_full_scan",
+    "timeout_secs": 120,
+    "retention_days": 90,
+    "retention_count": 180
   }
 }
