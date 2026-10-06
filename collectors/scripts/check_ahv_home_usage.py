@@ -22,25 +22,30 @@ logger = logging.getLogger(__name__)
 
 # --- Global Configurations ---
 DEF_UNAME = "admin"
-DEF_PWD = "CZNutanix.1234"
+DEF_PWD = "Nutanix.123"
+DEF_CVM_USER = "nutanix"
+CVM_SSH_KEY_PATH = os.path.join(
+  os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+  "ssh", "keys", "nutanix"
+)
 SHELL_PROMPT_DELAY = 2
 HOSTSSH_EXECUTION_DELAY = 15
 BUFFER_POLL_DELAY = 1
 HOST_DF_COMMAND = "df -P -h"
 
 
-def _cvm_usernames(pe_user: str) -> List[str]:
+def _cvm_usernames(cvm_user: str) -> List[str]:
   """Build a list of usernames to try when SSHing to the CVM.
   
   Args:
-    pe_user (str): The configured Prism Element admin username.
+    cvm_user (str): The configured CVM SSH username.
     
   Returns:
     List[str]: A list of unique usernames to attempt, with the configured
-      PE user first, followed by the default 'nutanix' OS user.
+      CVM user first, followed by the default 'nutanix' OS user as fallback.
   """
   users = []
-  for user in (pe_user, "nutanix"):
+  for user in (cvm_user, "nutanix"):
     if user and user not in users:
       users.append(user)
   return users
@@ -78,8 +83,8 @@ def _parse_df_output(output: str) -> Dict[str, any]:
 
 def get_cluster_info(
   cluster_ip: str, username: str, password: str
-) -> Tuple[Optional[str], Dict[str, str]]:
-  """Fetches the cluster name and host mapping from the Prism API.
+) -> Tuple[Optional[str], Dict[str, str], Optional[str]]:
+  """Fetches the cluster name, host mapping, and a CVM IP from the Prism API.
 
   Args:
     cluster_ip (str): The virtual IP address of the cluster.
@@ -87,8 +92,8 @@ def get_cluster_info(
     password (str): The Prism API password.
 
   Returns:
-    Tuple[Optional[str], Dict[str, str]]: Cluster name (or None) and a
-      map of hypervisor IPs to hostnames.
+    Tuple[Optional[str], Dict[str, str], Optional[str]]: Cluster name (or None),
+      map of hypervisor IPs to hostnames, and a CVM IP for SSH access.
   """
   prism_auth = (username, password)
   cluster_name = None
@@ -102,6 +107,7 @@ def get_cluster_info(
     logger.error(f"Failed to fetch cluster info for {cluster_ip}: {e}")
 
   hosts_map = {}
+  cvm_ip = None
   try:
     url = f"https://{cluster_ip}:9440/PrismGateway/services/rest/v2.0/hosts/"
     response = requests.get(url, auth=prism_auth, verify=False, timeout=10)
@@ -112,18 +118,34 @@ def get_cluster_info(
       ip = entity.get("hypervisor_address")
       if name and ip:
         hosts_map[ip] = name
-    return cluster_name, hosts_map
+      
+      # Get the first CVM IP for SSH access
+      if not cvm_ip:
+        cvm_ip = (
+          entity.get("service_vmexternal_ip") or
+          entity.get("controller_vm_backplane_ip") or
+          entity.get("service_vm_external_ip") or
+          entity.get("ipmi_address")
+        )
+    
+    if cvm_ip:
+      logger.info(f"Using CVM IP {cvm_ip} for SSH to cluster {cluster_ip}")
+    else:
+      logger.warning(f"No CVM IP found for {cluster_ip}, will use cluster VIP")
+    
+    return cluster_name, hosts_map, cvm_ip
   except (requests.exceptions.RequestException, ValueError) as e:
     logger.error(f"Error fetching hosts from API for {cluster_ip}: {e}")
-    return cluster_name, {}
+    return cluster_name, {}, None
 
 def execute_ssh_command(
   ip: str,
   port: int,
   username: str,
-  password: str,
-  command: str,
-  is_cvm: bool,
+  password: str = None,
+  command: str = None,
+  is_cvm: bool = False,
+  key_filename: str = None,
 ) -> str:
   """Establishes an SSH connection and executes a command.
 
@@ -131,10 +153,11 @@ def execute_ssh_command(
     ip (str): Target IP address to connect to.
     port (int): SSH port.
     username (str): SSH username.
-    password (str): SSH password.
+    password (str, optional): SSH password. Not used if key_filename is provided.
     command (str): Command to execute on the remote machine.
     is_cvm (bool): Flag indicating if connection is to a Controller VM,
       requiring interactive PTY menu handling.
+    key_filename (str, optional): Path to SSH private key file for key-based auth.
 
   Returns:
     str: The string output of the command.
@@ -142,14 +165,24 @@ def execute_ssh_command(
   client = paramiko.SSHClient()
   client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
   try:
-    client.connect(
-      ip,
-      username=username,
-      password=password,
-      port=port,
-      timeout=15,
-      auth_timeout=15,
-    )
+    connect_kwargs = {
+      "hostname": ip,
+      "username": username,
+      "port": port,
+      "timeout": 60,
+      "banner_timeout": 60,
+      "auth_timeout": 30,
+    }
+    
+    # Use SSH key if provided, otherwise use password
+    if key_filename and os.path.exists(key_filename):
+      connect_kwargs["key_filename"] = key_filename
+    elif password:
+      connect_kwargs["password"] = password
+    else:
+      raise ValueError("Either password or key_filename must be provided")
+    
+    client.connect(**connect_kwargs)
     if is_cvm:
       shell = client.invoke_shell()
       time.sleep(SHELL_PROMPT_DELAY)
@@ -180,8 +213,15 @@ def execute_ssh_command(
         output += shell.recv(8192).decode("utf-8")
         time.sleep(BUFFER_POLL_DELAY)
     else:
-      _, stdout, _ = client.exec_command(command)
+      _, stdout, stderr = client.exec_command(command, timeout=30)
       output = stdout.read().decode("utf-8").strip()
+      error_output = stderr.read().decode("utf-8").strip()
+      
+      if error_output:
+        logger.warning(f"SSH command stderr for {ip}: {error_output}")
+      
+      if not output and error_output:
+        logger.error(f"SSH command failed for {ip}. Stderr: {error_output}")
 
     return output
   finally:
@@ -189,58 +229,75 @@ def execute_ssh_command(
 
 
 def run_command_on_cvm(
-  cluster_ip: str, pe_user: str, pe_pass: str, remote_command: str
+  cluster_ip: str, cvm_user: str, remote_command: str
 ) -> str:
-  """SSH to the CVM (SVM) and execute a command in a login shell.
+  """SSH to the CVM (SVM) and execute a command using SSH key authentication.
   
   Args:
     cluster_ip (str): The virtual IP address of the cluster (CVM target).
-    pe_user (str): The Prism Element admin username.
-    pe_pass (str): The password for authentication.
+    cvm_user (str): The CVM SSH username (typically 'nutanix').
     remote_command (str): The command to execute on the CVM.
     
   Returns:
     str: The command output, or empty string if all attempts fail.
   """
-  wrapped = f"bash -lc {shlex.quote(remote_command)}"
+  # Source Nutanix profile and run the command
+  # Use full path for hostssh if it's in the command
+  if "hostssh" in remote_command and not remote_command.startswith("/usr/local/nutanix"):
+    cmd_to_run = remote_command.replace("hostssh", "/usr/local/nutanix/cluster/bin/hostssh", 1)
+  else:
+    cmd_to_run = remote_command
+  
+  # Wrap command to source profile first, then run
+  wrapped = f"source /etc/profile.d/nutanix_env.sh 2>/dev/null; {cmd_to_run}"
+  
   last_error = None
-  for username in _cvm_usernames(pe_user):
+  for username in _cvm_usernames(cvm_user):
+    # Try with exec_command (cleaner output)
     try:
       output = execute_ssh_command(
-        cluster_ip, 22, username, pe_pass, wrapped, is_cvm=False
+        ip=cluster_ip,
+        port=22,
+        username=username,
+        command=wrapped,
+        is_cvm=False,
+        key_filename=CVM_SSH_KEY_PATH
       )
       if output and "not allowed" not in output.lower():
         return output
     except Exception as err:
       last_error = err
-      logger.error(
-        f"CVM exec_command failed for {cluster_ip} as {username}: {err}"
-      )
+      logger.error(f"CVM exec_command failed for {cluster_ip} as {username}: {err}")
+    
+    # Fallback: Try with interactive shell
     try:
       output = execute_ssh_command(
-        cluster_ip, 22, username, pe_pass, remote_command, is_cvm=True
+        ip=cluster_ip,
+        port=22,
+        username=username,
+        command=cmd_to_run,
+        is_cvm=True,
+        key_filename=CVM_SSH_KEY_PATH
       )
       if output and "not allowed" not in output.lower():
         return output
     except Exception as err:
       last_error = err
-      logger.error(
-        f"CVM interactive SSH failed for {cluster_ip} as {username}: {err}"
-      )
+      logger.error(f"CVM interactive SSH failed for {cluster_ip} as {username}: {err}")
+  
   if last_error:
     logger.error(f"All CVM SSH attempts failed for {cluster_ip}: {last_error}")
   return ""
 
 
 def fetch_usage_data_from_host_via_cvm(
-  cluster_ip: str, pe_user: str, pe_pass: str, hosts_map: Dict[str, str]
+  cluster_ip: str, cvm_user: str, hosts_map: Dict[str, str]
 ) -> str:
   """Gather partition data on all AHV hosts from the SVM with hostssh.
 
   Args:
     cluster_ip (str): The virtual IP address of the cluster.
-    pe_user (str): The Prism Element admin user.
-    pe_pass (str): The Prism Element admin password.
+    cvm_user (str): The CVM SSH username.
     hosts_map (Dict[str, str]): Map of hypervisor IPs to hostnames.
 
   Returns:
@@ -250,7 +307,7 @@ def fetch_usage_data_from_host_via_cvm(
     return ""
 
   output = run_command_on_cvm(
-    cluster_ip, pe_user, pe_pass, f"hostssh {shlex.quote(HOST_DF_COMMAND)}"
+    cluster_ip, cvm_user, f"hostssh {shlex.quote(HOST_DF_COMMAND)}"
   )
   if "%" in output:
     return output
@@ -258,19 +315,18 @@ def fetch_usage_data_from_host_via_cvm(
 
 
 def get_host_partition_info_via_svm(
-  cluster_ip: str, pe_user: str, pe_pass: str, host_ip: str
+  cluster_ip: str, cvm_user: str, host_ip: str
 ) -> Dict[str, any]:
   """Collect partition info from a single AHV host via nested SSH through the CVM.
   
   This function performs a two-hop SSH connection:
-  1. SSH to the CVM
-  2. SSH from the CVM to the target AHV host
+  1. SSH to the CVM using SSH key
+  2. SSH from the CVM to the target AHV host (using passwordless SSH keys)
   3. Run 'df -P -h' on the AHV host
   
   Args:
     cluster_ip (str): The virtual IP address of the cluster (CVM).
-    pe_user (str): The Prism Element admin username.
-    pe_pass (str): The password for authentication.
+    cvm_user (str): The CVM SSH username.
     host_ip (str): The IP address of the target AHV host.
     
   Returns:
@@ -283,7 +339,7 @@ def get_host_partition_info_via_svm(
     f"root@{host_ip} {shlex.quote(HOST_DF_COMMAND)}"
   )
   try:
-    output = run_command_on_cvm(cluster_ip, pe_user, pe_pass, nested)
+    output = run_command_on_cvm(cluster_ip, cvm_user, nested)
     partitions = _parse_df_output(output)
     if partitions:
       return {
@@ -360,29 +416,37 @@ def parse_cvm_output(output: str, hosts_map: Dict[str, str]) -> Tuple[List[Dict]
   return results, output
 
 def collect_cluster_partition_usage(
-  cluster_ip: str, pe_user: str, pe_pass: str
+  cluster_ip: str, pe_user: str, pe_pass: str, cvm_user: str, explicit_cvm_ip: str = None
 ) -> Dict:
   """Orchestrates partition data collection for hosts within a cluster.
 
   Args:
-    cluster_ip (str): The virtual IP address of the cluster.
-    pe_user (str): The Prism Element admin username.
-    pe_pass (str): The Prism Element admin password.
+    cluster_ip (str): The virtual IP address of the cluster (for API access).
+    pe_user (str): The Prism Element admin username (for REST API).
+    pe_pass (str): The Prism Element admin password (for REST API).
+    cvm_user (str): The CVM SSH username (uses SSH key from ssh/keys/nutanix).
+    explicit_cvm_ip (str, optional): Explicitly configured CVM IP (overrides API lookup).
 
   Returns:
     Dict: A dictionary containing collected host partition usage metrics.
   """
-  cluster_name, hosts_map = get_cluster_info(cluster_ip, pe_user, pe_pass)
+  cluster_name, hosts_map, cvm_ip = get_cluster_info(cluster_ip, pe_user, pe_pass)
 
   if not cluster_name or not hosts_map:
     fallback = cluster_name if cluster_name else cluster_ip
     logger.error(f"Halting processing for {fallback} - missing metadata.")
     return {fallback: [{"error": "Could not fetch hosts map from API"}]}
+  
+  # Use explicitly configured CVM IP, or API-discovered CVM IP, or fallback to cluster VIP
+  ssh_target = explicit_cvm_ip or cvm_ip or cluster_ip
+  
+  if ssh_target == cluster_ip and not explicit_cvm_ip:
+    logger.warning(f"No CVM IP found, falling back to cluster VIP {cluster_ip} (SSH may fail)")
 
   host_results = []
   raw_hostssh_output = ""
   cvm_output = fetch_usage_data_from_host_via_cvm(
-    cluster_ip, pe_user, pe_pass, hosts_map
+    ssh_target, cvm_user, hosts_map
   )
 
   if cvm_output:
@@ -397,7 +461,7 @@ def collect_cluster_partition_usage(
       continue
     host_results.append({
       name: get_host_partition_info_via_svm(
-        cluster_ip, pe_user, pe_pass, ip
+        ssh_target, cvm_user, ip
       )
     })
 
@@ -443,16 +507,34 @@ def collect_all_ahv_partition_usage(config_path: Optional[str] = None) -> None:
   for endpoint in pe_endpoints:
     ip = endpoint.get("ip") or endpoint.get("virtual_ip")
     creds = endpoint.get("credentials", {})
-    user = creds.get("username", creds.get("user", DEF_UNAME))
-    pwd = creds.get("password", DEF_PWD)
+    
+    # Extract Prism UI credentials (for REST API)
+    user = (
+      creds.get("username") or 
+      creds.get("user") or 
+      endpoint.get("user") or 
+      DEF_UNAME
+    )
+    pwd = creds.get("password") or endpoint.get("password") or DEF_PWD
+    
+    # Extract CVM SSH username (uses SSH key from ssh/keys/nutanix)
+    cvm_user = (
+      creds.get("cvm_user") or 
+      endpoint.get("cvm_user") or 
+      DEF_CVM_USER
+    )
+    
+    # Optional: explicitly specified CVM IP in config (overrides API lookup)
+    explicit_cvm_ip = endpoint.get("cvm_ip") or creds.get("cvm_ip")
 
     if not ip:
       continue
 
-    logger.info(f"Fetching AHV host partition usage for IP: {ip}...")
-    final_results[ip] = collect_cluster_partition_usage(ip, user, pwd)
+    logger.info(f"Fetching AHV host partition usage for cluster: {ip}...")
+    final_results[ip] = collect_cluster_partition_usage(
+      ip, user, pwd, cvm_user, explicit_cvm_ip
+    )
 
-  #Output collected results in JSON format
   print(json.dumps(final_results, indent=2))
 
 if __name__ == "__main__":
