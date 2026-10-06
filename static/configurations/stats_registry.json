@@ -129,6 +129,25 @@
     "datasets": [
       {"key": "status", "label": "No Crashes", "color": "#dc3545", "axis": "y", "stepped": true}
     ]
+  },
+
+  "ngt_status": {
+    "name": "NGT Status",
+    "table_name": "check_ngt_status",
+    "summary": "Nutanix Guest Tools install, enabled, and reachability status per VM.",
+    "page": "stats_pages/time_series.html",
+    "parser": "ngt_status",
+    "chart_type": "line",
+    "y_axis": "VMs",
+    "is_percentage": false,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "ngt_installed", "label": "NGT Installed", "color": "#218838", "axis": "y"},
+      {"key": "ngt_not_installed", "label": "NGT Not Installed", "color": "#c82333", "axis": "y"},
+      {"key": "ngt_enabled", "label": "NGT Enabled", "color": "#1769b0", "axis": "y"},
+      {"key": "ngt_reachable", "label": "NGT Reachable", "color": "#6f42c1", "axis": "y"}
+    ]
   }
 
 
