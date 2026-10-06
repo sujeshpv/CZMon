@@ -6,6 +6,7 @@
   .chart-title { color: #444; font-size: 18px; font-weight: 700; margin-bottom: 24px; text-align: center; }
   .chart-frame { height: 350px; position: relative; }
   .time-options { border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: center; margin-top: 18px; padding-top: 10px; }
+  .stats-panel[hidden] { display: none !important; }
   .time-btn { background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 9px 18px; }
   .time-btn.active { background: #1769b0; border-color: #1769b0; color: #fff; }
   .stats-status { color: #66717d; padding: 18px 12px; text-align: center; }
@@ -19,8 +20,8 @@
   .point-meta-label { color: #66717d; display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
   .point-summary { line-height: 1.5; margin: 16px 0; }
   .metric-detail-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 14px 0; }
-  .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; padding: 14px; }
-  .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; }
+  .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; min-width: 0; overflow: hidden; padding: 14px; }
+  .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .metric-detail-table { border-collapse: collapse; margin-top: 14px; width: 100%; }
   .metric-detail-table th { background: #f4f7fa; color: #14589b; font-size: 13px; text-align: left; }
   .metric-detail-table th, .metric-detail-table td { border: 1px solid #e1e5e9; padding: 9px 11px; vertical-align: top; }
@@ -28,6 +29,9 @@
   .detail-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
   .detail-selectors .filter-select { min-width: 220px; }
   .detail-help { color: #66717d; margin: 14px 0 0; }
+  .stats-filter-row .vm-search-input { min-width: 220px; }
+  .stats-filter-row #vmFilter { min-width: 260px; }
+  .stats-filter-row .ngt-filter-select { min-width: 180px; }
   @media (max-width: 640px) { .point-meta { grid-template-columns: 1fr; } }
 </style>
 
@@ -51,9 +55,42 @@
       <option value="">Select Target</option>
     </select>
   </label>
+  {% if selected_stat.parser == "ngt_status" %}
+  <label class="filter-item" for="vmSearch" id="vmSearchItem">
+    <span class="filter-label">Search VM</span>
+    <input class="filter-select vm-search-input" id="vmSearch" type="search" placeholder="Search by name or UUID" disabled autocomplete="off">
+  </label>
+  <label class="filter-item" for="vmFilter" id="vmFilterItem">
+    <span class="filter-label">VM</span>
+    <select class="filter-select" id="vmFilter" disabled>
+      <option value="">Select VM</option>
+    </select>
+  </label>
+  <label class="filter-item" for="ngtStateFilter">
+    <span class="filter-label">NGT State</span>
+    <select class="filter-select ngt-filter-select" id="ngtStateFilter" disabled>
+      <option value="">All NGT States</option>
+    </select>
+  </label>
+  <label class="filter-item" for="ngtEnabledFilter">
+    <span class="filter-label">Enabled</span>
+    <select class="filter-select ngt-filter-select" id="ngtEnabledFilter" disabled>
+      <option value="">All</option>
+    </select>
+  </label>
+  <label class="filter-item" for="ngtReachableFilter">
+    <span class="filter-label">Reachable</span>
+    <select class="filter-select ngt-filter-select" id="ngtReachableFilter" disabled>
+      <option value="">All</option>
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
+  </label>
+  {% endif %}
 </section>
 
-<section class="stats-panel">
+{% if selected_stat.parser != "ngt_status" %}
+<section class="stats-panel" id="statsChartPanel">
   <div class="chart-title">{{ selected_stat.name }}</div>
   <div class="chart-frame"><canvas id="statsChart"></canvas></div>
   <div class="stats-status" id="statsStatus">Loading data…</div>
@@ -65,6 +102,7 @@
     <button class="time-btn active" data-range="90d" type="button">90 Days</button>
   </div>
 </section>
+{% endif %}
 
 <section class="stats-panel point-details-panel" id="pointDetailsPanel" hidden>
   <header class="point-details-header">
@@ -98,17 +136,38 @@
   const setupTypeFilter = document.getElementById("setupTypeFilter");
   const targetFilter = document.getElementById("targetFilter");
   const targetFilterLabel = document.getElementById("targetFilterLabel");
+  const vmSearchItem = document.getElementById("vmSearchItem");
+  const vmFilterItem = document.getElementById("vmFilterItem");
+  const vmSearch = document.getElementById("vmSearch");
+  const vmFilter = document.getElementById("vmFilter");
+  const ngtStateFilter = document.getElementById("ngtStateFilter");
+  const ngtEnabledFilter = document.getElementById("ngtEnabledFilter");
+  const ngtReachableFilter = document.getElementById("ngtReachableFilter");
   const pointDetailsPanel = document.getElementById("pointDetailsPanel");
   const pointDetailsClear = document.getElementById("pointDetailsClear");
   const pointDetailsTarget = document.getElementById("pointDetailsTarget");
   const pointDetailsTimestamp = document.getElementById("pointDetailsTimestamp");
   const pointDetailsSummary = document.getElementById("pointDetailsSummary");
   const pointMetricDetails = document.getElementById("pointMetricDetails");
+  const statsChartPanel = document.getElementById("statsChartPanel");
   const datasetConfig = config.datasets || [{
     key: "value", label: config.name, color: "#1769b0", axis: "y"
   }];
   let currentRange = "90d";
   let pointRecords = [];
+  let clusterVms = [];
+  let selectedVmUuid = "";
+  let lastNgtPointItem = null;
+
+  function isNgtStat() {
+    return config.parser === "ngt_status";
+  }
+
+  function showLatestNgtDetails() {
+    if (!isNgtStat() || !pointRecords.length) return;
+    lastNgtPointItem = null;
+    showPointDetails(pointRecords[pointRecords.length - 1]);
+  }
 
   function chartScales() {
     const scales = {
@@ -140,7 +199,8 @@
     return scales;
   }
 
-  const chart = new Chart(document.getElementById("statsChart"), {
+  const statsChartCanvas = document.getElementById("statsChart");
+  const chart = statsChartCanvas ? new Chart(statsChartCanvas, {
     type: config.chart_type || "line",
     data: { labels: [], datasets: datasetConfig.map((item) => ({
         label: item.label,
@@ -188,7 +248,7 @@
         if (selected.length) showPointDetails(pointRecords[selected[0].index]);
       }
     }
-  });
+  }) : null;
 
   function replaceOptions(select, placeholder, options) {
     select.replaceChildren(new Option(placeholder, ""));
@@ -212,7 +272,10 @@
     items.forEach(([label, value]) => {
       const card = createElement("div", "metric-detail-card");
       card.appendChild(createElement("span", "point-meta-label", label));
-      card.appendChild(createElement("span", "metric-detail-value", value));
+      const text = value === undefined || value === null ? "" : String(value);
+      const valueEl = createElement("span", "metric-detail-value", text);
+      if (text) valueEl.title = text;
+      card.appendChild(valueEl);
       grid.appendChild(card);
     });
     pointMetricDetails.appendChild(grid);
@@ -495,6 +558,69 @@
     addDetailTable(["Property", "Value"], rows);
   }
 
+  function renderNgtDetails(details) {
+    const vms = Array.isArray(details?.vms) ? details.vms : [];
+    const selectedVms = selectedVmUuid
+      ? vms.filter((vm) => vm.uuid === selectedVmUuid)
+      : vms.filter((vm) => vmMatchesNgtFilters(vm));
+
+    if (selectedVmUuid) {
+      const vm = selectedVms[0];
+      if (!vm) {
+        addDetailCards([["VM", "Not found in this snapshot for the selected cluster"]]);
+        return;
+      }
+      addDetailCards([
+        ["VM", vm.name || "Unknown"],
+        ["UUID", vm.uuid || ""],
+        ["Power", vm.power_state || ""],
+        ["NGT State", vm.ngt_state || ""],
+        ["Enabled", vm.ngt_enabled_state || ""],
+        ["Version", vm.version || ""],
+        ["Available Version", vm.available_version || ""],
+        ["ISO Mount", vm.iso_mount_state || ""],
+        ["Reachable", vm.is_reachable ? "Yes" : "No"],
+        ["Guest OS", vm.guest_os_version || ""]
+      ]);
+      const caps = Array.isArray(vm.enabled_capability_list)
+        ? vm.enabled_capability_list
+        : [];
+      if (caps.length) {
+        addDetailTable(["Enabled Capabilities"], caps.map((cap) => [cap]));
+      }
+      return;
+    }
+
+    addDetailCards([
+      ["Cluster", details?.Cluster_name || "Unknown"],
+      ["Total VMs", Number(details?.total_vms || 0)],
+      ["NGT Installed", Number(details?.ngt_installed || 0)],
+      ["NGT Not Installed", Number(details?.ngt_not_installed || 0)],
+      ["NGT Enabled", Number(details?.ngt_enabled || 0)],
+      ["NGT Disabled", Number(details?.ngt_disabled || 0)],
+      ["NGT Reachable", Number(details?.ngt_reachable || 0)],
+      ["Showing", `${selectedVms.length} of ${vms.length}`]
+    ]);
+    const rows = selectedVms.map((vm) => [
+      vm.name || "Unknown",
+      vm.uuid || "",
+      vm.power_state || "",
+      vm.ngt_state || "",
+      vm.ngt_enabled_state || "",
+      vm.version || "",
+      vm.is_reachable ? "Yes" : "No"
+    ]);
+    addDetailTable(
+      ["VM Name", "UUID", "Power", "NGT State", "Enabled", "Version", "Reachable"],
+      rows
+    );
+    if (!rows.length) {
+      pointMetricDetails.appendChild(
+        createElement("p", "detail-help", "No VMs match the selected NGT filters.")
+      );
+    }
+  }
+
   function showPointDetails(item) {
     if (!item) return;
     const date = new Date(item.timestamp);
@@ -502,6 +628,15 @@
     pointDetailsTarget.textContent = item.ip || "Unknown";
     pointDetailsTimestamp.textContent = date.toLocaleString();
     pointDetailsSummary.textContent = item.summary || "Collected metric details";
+    if (isNgtStat()) {
+      lastNgtPointItem = item;
+      if (selectedVmUuid) {
+        const selectedVm = clusterVms.find((vm) => vm.uuid === selectedVmUuid);
+        if (selectedVm) {
+          pointDetailsSummary.textContent = `NGT status for ${selectedVm.label}`;
+        }
+      }
+    }
     pointMetricDetails.replaceChildren();
 
     if (config.parser === "ahv_partition_usage") renderAhvDetails(details);
@@ -512,6 +647,7 @@
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
+    else if (config.parser === "ngt_status") renderNgtDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -523,10 +659,191 @@
     pointMetricDetails.replaceChildren();
   }
 
+  function parsePointDetails(item) {
+    let details = item?.details ?? item?.data ?? {};
+    if (typeof details === "string") {
+      try { details = JSON.parse(details); } catch (e) { details = {}; }
+    }
+    return details && typeof details === "object" ? details : {};
+  }
+
+  function resetVmFilter() {
+    selectedVmUuid = "";
+    clusterVms = [];
+    lastNgtPointItem = null;
+    if (!vmSearch || !vmFilter) return;
+    vmSearch.value = "";
+    replaceOptions(vmFilter, "Select a cluster first", []);
+    vmSearch.disabled = true;
+    vmFilter.disabled = true;
+    if (ngtStateFilter) {
+      replaceOptions(ngtStateFilter, "All NGT States", []);
+      ngtStateFilter.disabled = true;
+    }
+    if (ngtEnabledFilter) {
+      replaceOptions(ngtEnabledFilter, "All", []);
+      ngtEnabledFilter.disabled = true;
+    }
+    if (ngtReachableFilter) {
+      ngtReachableFilter.value = "";
+      ngtReachableFilter.disabled = true;
+    }
+  }
+
+  function vmMatchesNgtFilters(vm) {
+    const state = (ngtStateFilter && ngtStateFilter.value) || "";
+    const enabled = (ngtEnabledFilter && ngtEnabledFilter.value) || "";
+    const reachable = (ngtReachableFilter && ngtReachableFilter.value) || "";
+    if (state && String(vm.ngt_state || "") !== state) return false;
+    if (enabled && String(vm.ngt_enabled_state || "") !== enabled) return false;
+    if (reachable) {
+      const isReachable = vm.is_reachable === true || vm.is_reachable === "Yes";
+      if (reachable === "Yes" && !isReachable) return false;
+      if (reachable === "No" && isReachable) return false;
+    }
+    return true;
+  }
+
+  function uniqueSorted(values) {
+    return Array.from(new Set(values.filter((value) => value))).sort();
+  }
+
+  function populateNgtFilterOptions() {
+    if (!isNgtStat()) return;
+    const previousState = ngtStateFilter ? ngtStateFilter.value : "";
+    const previousEnabled = ngtEnabledFilter ? ngtEnabledFilter.value : "";
+    const states = uniqueSorted(clusterVms.map((vm) => vm.ngt_state));
+    const enabled = uniqueSorted(clusterVms.map((vm) => vm.ngt_enabled_state));
+    if (ngtStateFilter) {
+      replaceOptions(
+        ngtStateFilter,
+        "All NGT States",
+        states.map((value) => ({ key: value, label: value }))
+      );
+      ngtStateFilter.value = states.includes(previousState) ? previousState : "";
+      ngtStateFilter.disabled = !clusterVms.length;
+    }
+    if (ngtEnabledFilter) {
+      replaceOptions(
+        ngtEnabledFilter,
+        "All",
+        enabled.map((value) => ({ key: value, label: value }))
+      );
+      ngtEnabledFilter.value = enabled.includes(previousEnabled) ? previousEnabled : "";
+      ngtEnabledFilter.disabled = !clusterVms.length;
+    }
+    if (ngtReachableFilter) {
+      ngtReachableFilter.disabled = !clusterVms.length;
+    }
+  }
+
+  function collectClusterVms(series) {
+    const vmsByUuid = new Map();
+    series.forEach((item) => {
+      const details = parsePointDetails(item);
+      (Array.isArray(details.vms) ? details.vms : []).forEach((vm) => {
+        const uuid = String(vm?.uuid || "").trim();
+        if (!uuid) return;
+        vmsByUuid.set(uuid, {
+          uuid,
+          name: String(vm.name || "Unknown"),
+          ngt_state: String(vm.ngt_state || ""),
+          ngt_enabled_state: String(vm.ngt_enabled_state || ""),
+          is_reachable: Boolean(vm.is_reachable)
+        });
+      });
+    });
+    const nameCounts = {};
+    vmsByUuid.forEach((vm) => {
+      nameCounts[vm.name] = (nameCounts[vm.name] || 0) + 1;
+    });
+    return Array.from(vmsByUuid.values())
+      .map((vm) => ({
+        ...vm,
+        label: nameCounts[vm.name] > 1
+          ? `${vm.name} (${vm.uuid.slice(0, 8)})`
+          : vm.name
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  function refreshVmOptions() {
+    if (!isNgtStat() || !vmFilter || !vmSearch) return;
+    const query = (vmSearch.value || "").trim().toLowerCase();
+    const filtered = clusterVms.filter((vm) => {
+      if (!vmMatchesNgtFilters(vm)) return false;
+      if (!query) return true;
+      return vm.name.toLowerCase().includes(query)
+        || vm.uuid.toLowerCase().includes(query)
+        || vm.label.toLowerCase().includes(query);
+    });
+    const options = filtered.map((vm) => ({ key: vm.uuid, label: vm.label }));
+    let placeholder = "Select a cluster first";
+    if (targetFilter.value && !clusterVms.length) placeholder = "No VMs found";
+    else if (targetFilter.value && !options.length) placeholder = "No matching VMs";
+    else if (targetFilter.value) placeholder = `Select VM (${options.length})`;
+    replaceOptions(vmFilter, placeholder, options);
+
+    let nextUuid = "";
+    if (query && options.length) {
+      const exact = filtered.find((vm) =>
+        vm.name.toLowerCase() === query
+        || vm.uuid.toLowerCase() === query
+        || vm.label.toLowerCase() === query
+      );
+      const startsWith = filtered.find((vm) =>
+        vm.name.toLowerCase().startsWith(query)
+        || vm.label.toLowerCase().startsWith(query)
+      );
+      if (exact) nextUuid = exact.uuid;
+      else if (filtered.length === 1) nextUuid = filtered[0].uuid;
+      else if (startsWith) nextUuid = startsWith.uuid;
+    } else if (!query && options.some((item) => item.key === selectedVmUuid)) {
+      nextUuid = selectedVmUuid;
+    }
+
+    selectedVmUuid = nextUuid;
+    vmFilter.value = nextUuid;
+    vmSearch.disabled = !targetFilter.value;
+    vmFilter.disabled = !targetFilter.value || options.length === 0;
+  }
+
+  function showSelectedVmDetails() {
+    if (!pointRecords.length) {
+      closePointDetails();
+      return;
+    }
+    if (selectedVmUuid) {
+      showPointDetails(pointRecords[pointRecords.length - 1]);
+      return;
+    }
+    if (isNgtStat() && targetFilter.value) {
+      showLatestNgtDetails();
+      return;
+    }
+    closePointDetails();
+  }
+
+  function syncVmFilterFromSeries(series) {
+    if (!isNgtStat()) return;
+    if (!targetFilter.value) {
+      resetVmFilter();
+      closePointDetails();
+      return;
+    }
+    clusterVms = collectClusterVms(series);
+    populateNgtFilterOptions();
+    vmSearch.disabled = false;
+    refreshVmOptions();
+    showLatestNgtDetails();
+  }
+
   async function fetchStatsData() {
-    status.hidden = false;
-    status.classList.remove("error");
-    status.textContent = "Loading data…";
+    if (status) {
+      status.hidden = false;
+      status.classList.remove("error");
+      status.textContent = "Loading data…";
+    }
 
     const target = targetFilter.value;
     const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
@@ -545,6 +862,15 @@
         seen.add(key);
         return true;
       });
+      pointRecords = series;
+      if (isNgtStat()) {
+        if (!target || !series.length) {
+          closePointDetails();
+        }
+        syncVmFilterFromSeries(series);
+        return;
+      }
+
       const labels = [];
       closePointDetails();
 
@@ -607,10 +933,13 @@
 
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+      syncVmFilterFromSeries(series);
     } catch (error) {
-      status.hidden = false;
-      status.classList.add("error");
-      status.textContent = error.message;
+      if (status) {
+        status.hidden = false;
+        status.classList.add("error");
+        status.textContent = error.message;
+      }
     }
   }
 
@@ -653,6 +982,7 @@
     const label = targetLabel();
     targetFilterLabel.textContent = label;
     replaceOptions(targetFilter, `Select ${label}`, options);
+    if (isNgtStat()) resetVmFilter();
   }
 
   const supportedTypes = config.endpoint_types || ["PC", "PE"];
@@ -674,8 +1004,46 @@
     refreshTargets();
     fetchStatsData();
   });
-  targetFilter.addEventListener("change", fetchStatsData);
-  pointDetailsClear.addEventListener("click", closePointDetails);
+  targetFilter.addEventListener("change", () => {
+    selectedVmUuid = "";
+    if (vmSearch) vmSearch.value = "";
+    fetchStatsData();
+  });
+  if (isNgtStat()) {
+    vmSearch.addEventListener("input", () => {
+      refreshVmOptions();
+      showSelectedVmDetails();
+    });
+    vmFilter.addEventListener("change", () => {
+      selectedVmUuid = vmFilter.value;
+      showSelectedVmDetails();
+    });
+    const applyNgtFilters = () => {
+      if (selectedVmUuid && !clusterVms.some(
+        (vm) => vm.uuid === selectedVmUuid && vmMatchesNgtFilters(vm)
+      )) {
+        selectedVmUuid = "";
+        if (vmFilter) vmFilter.value = "";
+      }
+      refreshVmOptions();
+      if (pointRecords.length) {
+        showPointDetails(lastNgtPointItem || pointRecords[pointRecords.length - 1]);
+      }
+    };
+    if (ngtStateFilter) ngtStateFilter.addEventListener("change", applyNgtFilters);
+    if (ngtEnabledFilter) ngtEnabledFilter.addEventListener("change", applyNgtFilters);
+    if (ngtReachableFilter) ngtReachableFilter.addEventListener("change", applyNgtFilters);
+  }
+  pointDetailsClear.addEventListener("click", () => {
+    if (isNgtStat()) {
+      selectedVmUuid = "";
+      if (vmSearch) vmSearch.value = "";
+      refreshVmOptions();
+      showLatestNgtDetails();
+      return;
+    }
+    closePointDetails();
+  });
 
   document.querySelectorAll(".time-btn").forEach((button) => {
     button.addEventListener("click", () => {
