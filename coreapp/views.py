@@ -6,6 +6,7 @@ from django.http import JsonResponse
 from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from urllib.parse import quote_plus
+from collectors.scripts.check_file_descriptor_count import resolve_cluster_hermes
 from library.const import *
 import json
 import math
@@ -1615,12 +1616,229 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "file_descriptor_count":
+    return _normalize_file_descriptor_payload(payload)
+
   value = len(payload)
   return {
     "values": {"value": value},
     "summary": f"Captured {value} record(s).",
     "details": payload,
   }
+
+
+def _file_max_text(value):
+  """Keep kernel file-max as the exact file-nr string, not a JS number."""
+  if value is None or value == "":
+    return None
+  return str(value).strip()
+
+
+def _file_descriptor_status(allocated):
+  """Classify peak allocated FD count for Stats summaries."""
+  allocated = _stats_number(allocated)
+  if allocated >= 60000:
+    return "CRITICAL"
+  if allocated >= 20000:
+    return "WARNING"
+  return "HEALTHY"
+
+
+def _hermes_fd_status(fd_count):
+  """Classify ANC Hermes FD count. Values above 100 cause flow issues."""
+  if fd_count is None:
+    return "UNKNOWN"
+  if _stats_number(fd_count) > 100:
+    return "CRITICAL"
+  return "HEALTHY"
+
+
+def _worst_fd_status(*statuses):
+  """Return the most severe File Descriptor status from mixed signals."""
+  order = {
+    "CRITICAL": 3,
+    "WARNING": 2,
+    "HEALTHY": 1,
+    "UNKNOWN": 0,
+    "ERROR": 0,
+  }
+  ranked = [status for status in statuses if status]
+  if not ranked:
+    return "ERROR"
+  return max(ranked, key=lambda status: order.get(status, 0))
+
+
+def _normalize_hermes_details(raw_hermes):
+  """Normalize Hermes FD details collected on a CVM or PCVM."""
+  if not isinstance(raw_hermes, dict):
+    return None
+  fd_count = raw_hermes.get("fd_count")
+  if fd_count is None and raw_hermes.get("status") == "UNKNOWN":
+    return {
+      "pid": raw_hermes.get("pid"),
+      "fd_count": None,
+      "status": "UNKNOWN",
+    }
+  if fd_count is None:
+    return None
+  return {
+    "pid": raw_hermes.get("pid"),
+    "fd_count": int(_stats_number(fd_count)),
+    "status": raw_hermes.get("status") or _hermes_fd_status(fd_count),
+  }
+
+
+def _normalize_file_descriptor_payload(payload):
+  """Accept local_cli (cvms) and CLI (file_nr rows) FD payloads."""
+  if not isinstance(payload, dict):
+    payload = {}
+  cvms = payload.get("cvms") if isinstance(payload.get("cvms"), list) else []
+  if not cvms and payload.get("parser") == "file_nr":
+    cvms = []
+    for row in payload.get("rows") or []:
+      if not isinstance(row, dict):
+        continue
+      allocated = int(_stats_number(row.get("allocated")))
+      cvms.append({
+        "host": row.get("host") or "unknown",
+        "allocated": allocated,
+        "unused": int(_stats_number(row.get("unused"))),
+        "max": _file_max_text(row.get("max")),
+        "status": row.get("status") or _file_descriptor_status(allocated),
+        "top_processes": row.get("top_processes") or [],
+        "hermes": _normalize_hermes_details(row.get("hermes")),
+      })
+  else:
+    normalized_cvms = []
+    for row in cvms:
+      if not isinstance(row, dict):
+        continue
+      copied = dict(row)
+      copied["max"] = _file_max_text(row.get("max"))
+      copied["top_processes"] = row.get("top_processes") or []
+      copied["hermes"] = _normalize_hermes_details(row.get("hermes"))
+      if not copied.get("status") or copied.get("status") == "UNKNOWN":
+        copied["status"] = _file_descriptor_status(row.get("allocated"))
+      normalized_cvms.append(copied)
+    cvms = normalized_cvms
+  cvms = resolve_cluster_hermes(cvms)
+  allocated = payload.get("max_allocated")
+  if allocated is None:
+    allocated_values = [
+      _stats_number(row.get("allocated"))
+      for row in cvms
+      if isinstance(row, dict) and row.get("allocated") is not None
+    ]
+    allocated = max(allocated_values) if allocated_values else 0
+  allocated = _stats_number(allocated)
+  active_hermes = None
+  for row in cvms:
+    if not isinstance(row, dict):
+      continue
+    hermes = row.get("hermes") or {}
+    if hermes.get("role") == "active" or (
+      hermes.get("pid") is not None and hermes.get("fd_count") is not None
+    ):
+      if active_hermes is None or hermes.get("role") == "active":
+        active_hermes = {
+          "host": row.get("host"),
+          "pid": hermes.get("pid"),
+          "fd_count": hermes.get("fd_count"),
+          "status": hermes.get("status") or _hermes_fd_status(hermes.get("fd_count")),
+        }
+        if hermes.get("role") == "active":
+          break
+  hermes_counts = (
+    [active_hermes["fd_count"]]
+    if active_hermes and active_hermes.get("fd_count") is not None
+    else []
+  )
+  allocated_status = _file_descriptor_status(allocated) if cvms else "ERROR"
+  hermes_status = (active_hermes or {}).get("status")
+  status = payload.get("status")
+  if not status or status in ("UNKNOWN", "ERROR"):
+    status = _worst_fd_status(allocated_status, hermes_status)
+  else:
+    status = _worst_fd_status(status, hermes_status)
+  details = dict(payload)
+  details["cvms"] = cvms
+  details["max_allocated"] = allocated if cvms else payload.get("max_allocated")
+  details["max_hermes_fds"] = (
+    hermes_counts[0] if hermes_counts else payload.get("max_hermes_fds")
+  )
+  details["hermes_instance"] = active_hermes
+  details["healthy_threshold"] = payload.get("healthy_threshold") or 20000
+  details["critical_threshold"] = payload.get("critical_threshold") or 60000
+  details["top_process_threshold"] = payload.get("top_process_threshold") or 500
+  details["top_process_limit"] = payload.get("top_process_limit") or 20
+  details["hermes_fd_limit"] = payload.get("hermes_fd_limit") or 100
+  details["status"] = status
+  hermes_note = ""
+  if active_hermes:
+    hermes_note = (
+      f" ANC Hermes on {active_hermes['host']} "
+      f"(pid {active_hermes['pid']}): {active_hermes['fd_count']} FDs "
+      f"(limit {details['hermes_fd_limit']})."
+    )
+  elif any((row.get("hermes") or {}).get("role") == "missing" for row in cvms):
+    hermes_note = " ANC Hermes (/usr/bin/hermes) was not found on any PCVM."
+  return {
+    "values": {"allocated": allocated},
+    "summary": (
+      f"{status}: peak allocated FDs {allocated:g} across {len(cvms)} CVM(s). "
+      f"Healthy < 20,000; critical >= 60,000.{hermes_note}"
+    ),
+    "details": details,
+  }
+
+
+def _file_descriptor_is_pc(ip, endpoint_type):
+  """Hermes is a PC/ANC process; PE targets never show it."""
+  if str(endpoint_type or "").upper() == "PC":
+    return True
+  if str(endpoint_type or "").upper() == "PE":
+    return False
+  return str(ip or "").strip() in _configured_stats_ips("PC")
+
+
+def _scope_file_descriptor_payload(normalized, ip, endpoint_type):
+  """Hide ANC Hermes on PE points; keep it only for PC."""
+  if not isinstance(normalized, dict):
+    return normalized
+  details = dict(normalized.get("details") or {})
+  if _file_descriptor_is_pc(ip, endpoint_type):
+    details["show_hermes"] = True
+    normalized["details"] = details
+    return normalized
+
+  cvms = []
+  for row in details.get("cvms") or []:
+    if not isinstance(row, dict):
+      continue
+    copied = dict(row)
+    copied.pop("hermes", None)
+    cvms.append(copied)
+  allocated = details.get("max_allocated")
+  status = _file_descriptor_status(allocated) if cvms else details.get("status")
+  details["cvms"] = cvms
+  details["show_hermes"] = False
+  details["hermes_instance"] = None
+  details["max_hermes_fds"] = None
+  details["status"] = status
+  normalized["details"] = details
+  if cvms and allocated is not None:
+    normalized["summary"] = (
+      f"{status}: peak allocated FDs {allocated:g} across {len(cvms)} CVM(s). "
+      "Healthy < 20,000; critical >= 60,000."
+    )
+  return normalized
+
+
+def _created_at_utc_sql(column="created_at"):
+  """Compare ISO timestamps to SQLite datetime('now') without T/+00:00 skew."""
+  return (
+    f"datetime(substr(replace(replace({column}, 'T', ' '), 'Z', ''), 1, 19))"
+  )
 
 
 def _configured_stats_ips(endpoint_type):
@@ -1631,6 +1849,94 @@ def _configured_stats_ips(endpoint_type):
     for item in get_endpoints().get(endpoint_key, [])
     if isinstance(item, dict) and (item.get("ip") or item.get("virtual_ip"))
   }
+
+
+def _load_file_descriptor_series(
+  db_path, config, time_modifier, target, endpoint_type, endpoint_ips
+):
+  """Load FD rows only. Other Stats pages keep the original stats_data_api path."""
+  table_names = [config["table_name"]]
+  if "file_descriptor_count" not in table_names:
+    table_names.append("file_descriptor_count")
+  data_points = []
+
+  with sqlite3.connect(db_path) as conn:
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    for table_name in table_names:
+      table_exists = cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+      ).fetchone()
+      if not table_exists:
+        continue
+
+      columns = {
+        row["name"] for row in cursor.execute(f'PRAGMA table_info("{table_name}")')
+      }
+      if "created_at" not in columns:
+        continue
+
+      where = [f"{_created_at_utc_sql()} >= datetime('now', ?)"]
+      params = [time_modifier]
+      ip_column = (
+        "ip_address" if "ip_address" in columns
+        else "ip" if "ip" in columns
+        else None
+      )
+      if target and ip_column:
+        where.append(f"{ip_column} = ?")
+        params.append(target)
+      elif endpoint_type and ip_column:
+        if endpoint_ips:
+          placeholders = ", ".join("?" for _ in endpoint_ips)
+          where.append(f"{ip_column} IN ({placeholders})")
+          params.extend(sorted(endpoint_ips))
+        else:
+          where.append("1 = 0")
+
+      query = f"""
+        SELECT * FROM "{table_name}"
+        WHERE {' AND '.join(where)}
+        ORDER BY created_at DESC
+        LIMIT 100
+      """
+      for row in cursor.execute(query, params).fetchall():
+        row_dict = dict(row)
+        ip = (
+          row_dict.get("ip_address")
+          or row_dict.get("ip")
+          or row_dict.get("cluster_name")
+          or "Unknown"
+        )
+        raw_data = (
+          row_dict.get("status_data") or row_dict.get("output_json") or "{}"
+        )
+        if isinstance(raw_data, (dict, list)):
+          payload = raw_data
+        else:
+          try:
+            payload = json.loads(raw_data)
+          except (TypeError, json.JSONDecodeError):
+            payload = {"raw": raw_data}
+
+        normalized = _scope_file_descriptor_payload(
+          _normalize_file_descriptor_payload(payload), ip, endpoint_type
+        )
+        details = normalized.get("details") or {}
+        if details.get("status") == "ERROR" and not details.get("cvms"):
+          continue
+        data_points.append(
+          {
+            "timestamp": row_dict.get("created_at", "Latest"),
+            "ip": ip,
+            "data": details,
+            **normalized,
+          }
+        )
+
+  data_points.sort(key=lambda item: item.get("timestamp") or "")
+  return data_points
 
 
 def stats_data_api(request):
@@ -1676,6 +1982,21 @@ def stats_data_api(request):
   if range_key not in time_map:
     return JsonResponse({"error": "Unsupported time range."}, status=400)
   time_modifier = time_map[range_key]
+  if stat_key == "file_descriptor_count":
+    try:
+      data_points = _load_file_descriptor_series(
+        db_path, config, time_modifier, target, endpoint_type, endpoint_ips
+      )
+    except sqlite3.Error as error:
+      return JsonResponse({"error": f"Failed loading stats data: {error}"}, status=500)
+    return JsonResponse(
+      {
+        "stat": stat_key,
+        "name": config["name"],
+        "endpoint_types": supported_types,
+        "series": data_points,
+      }
+    )
   table_name = config["table_name"]
   data_points = []
 

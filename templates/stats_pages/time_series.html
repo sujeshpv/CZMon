@@ -19,8 +19,31 @@
   .point-meta-label { color: #66717d; display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
   .point-summary { line-height: 1.5; margin: 16px 0; }
   .metric-detail-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 14px 0; }
+  .metric-detail-grid-single-row {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 8px;
+  }
   .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; padding: 14px; }
+  .metric-detail-grid-single-row .metric-detail-card {
+    box-sizing: border-box;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    padding: 10px 8px;
+  }
   .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; }
+  .metric-detail-grid-single-row .point-meta-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .metric-detail-grid-single-row .metric-detail-value {
+    font-size: 15px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
   .metric-detail-table { border-collapse: collapse; margin-top: 14px; width: 100%; }
   .metric-detail-table th { background: #f4f7fa; color: #14589b; font-size: 13px; text-align: left; }
   .metric-detail-table th, .metric-detail-table td { border: 1px solid #e1e5e9; padding: 9px 11px; vertical-align: top; }
@@ -495,6 +518,110 @@
     addDetailTable(["Property", "Value"], rows);
   }
 
+  function formatKernelFileMax(value) {
+    if (value == null || value === "") return "N/A";
+    return String(value);
+  }
+
+  function renderFileDescriptorDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+    const cvms = Array.isArray(parsedData?.cvms) ? parsedData.cvms : [];
+    const topThreshold = parsedData?.top_process_threshold ?? 500;
+    const topLimit = parsedData?.top_process_limit ?? 20;
+    const hermesLimit = parsedData?.hermes_fd_limit ?? 100;
+    const hermesInstance = parsedData?.hermes_instance;
+    const showHermes = parsedData?.show_hermes !== false && setupTypeFilter.value !== "PE";
+    const cards = [
+      ["Status", parsedData?.status || "Unknown"],
+      ["Peak allocated", parsedData?.max_allocated ?? "N/A"],
+      ["Healthy / Critical", `${parsedData?.healthy_threshold ?? 20000} / ${parsedData?.critical_threshold ?? 60000}`]
+    ];
+    if (showHermes) {
+      cards.push(
+        ["Hermes PCVM", hermesInstance?.host || "not found"],
+        ["Hermes PID", hermesInstance?.pid ?? "n/a"],
+        ["Hermes FDs", hermesInstance?.fd_count ?? "n/a"],
+        ["Hermes status", hermesInstance?.status || "UNKNOWN"],
+        ["Hermes limit", hermesLimit]
+      );
+    }
+    const cardsGrid = createElement("div", "metric-detail-grid metric-detail-grid-single-row");
+    cards.forEach(([label, value]) => {
+      const card = createElement("div", "metric-detail-card");
+      card.appendChild(createElement("span", "point-meta-label", label));
+      card.appendChild(createElement("span", "metric-detail-value", value));
+      cardsGrid.appendChild(card);
+    });
+    pointMetricDetails.appendChild(cardsGrid);
+    addDetailTable(
+      ["Host", "Allocated", "Unused", "Kernel file-max", "Status"],
+      cvms.map((cvm) => [
+        cvm.host || "Unknown",
+        cvm.allocated ?? "N/A",
+        cvm.unused ?? "N/A",
+        formatKernelFileMax(cvm.max),
+        cvm.status || "Unknown"
+      ])
+    );
+    const processRows = [];
+    cvms.forEach((cvm) => {
+      (cvm.top_processes || []).forEach((proc) => {
+        processRows.push([
+          cvm.host || "Unknown",
+          proc.name || "unknown",
+          Number(proc.fd_count) || 0
+        ]);
+      });
+    });
+    processRows.sort((left, right) => right[2] - left[2]);
+    const limitedRows = processRows.slice(0, topLimit);
+    if (limitedRows.length) {
+      addDetailCards([[
+        "Top processes",
+        `Open FDs > ${topThreshold} on the collected VMs`
+      ]]);
+      addDetailTable(["Host", "Process", "Open FDs"], limitedRows);
+    } else {
+      addDetailCards([[
+        "Top processes",
+        `None above ${topThreshold} FDs in this sample.`
+      ]]);
+    }
+    if (parsedData?.error) {
+      addDetailCards([["Error", parsedData.error]]);
+    }
+  }
+
+  function applyFileDescriptorHistoryNote(series) {
+    if (config.parser !== "file_descriptor_count" || !series.length) return;
+    const rangeMs = {
+      "12h": 12 * 60 * 60 * 1000,
+      "24h": 24 * 60 * 60 * 1000,
+      "7d": 7 * 24 * 60 * 60 * 1000,
+      "30d": 30 * 24 * 60 * 60 * 1000,
+      "90d": 90 * 24 * 60 * 60 * 1000,
+    }[currentRange] || 0;
+    const times = series
+      .map((item) => new Date(item.timestamp).getTime())
+      .filter((value) => Number.isFinite(value));
+    if (!times.length || !rangeMs) return;
+    const oldest = Math.min(...times);
+    if (oldest - (Date.now() - rangeMs) <= Math.max(rangeMs * 0.1, 60 * 60 * 1000)) return;
+    const rangeLabel = {
+      "12h": "12 hours",
+      "24h": "24 hours",
+      "7d": "7 days",
+      "30d": "30 days",
+      "90d": "90 days",
+    }[currentRange] || currentRange;
+    status.hidden = false;
+    status.textContent = (
+      `No older records in the last ${rangeLabel}. ` +
+      `Showing ${series.length} sample(s) from ${new Date(oldest).toLocaleString()}.`
+    );
+  }
+
   function showPointDetails(item) {
     if (!item) return;
     const date = new Date(item.timestamp);
@@ -512,6 +639,7 @@
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
+    else if (config.parser === "file_descriptor_count") renderFileDescriptorDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -607,6 +735,7 @@
 
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+      applyFileDescriptorHistoryNote(series);
     } catch (error) {
       status.hidden = false;
       status.classList.add("error");

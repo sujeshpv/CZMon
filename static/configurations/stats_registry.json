@@ -129,7 +129,22 @@
     "datasets": [
       {"key": "status", "label": "No Crashes", "color": "#dc3545", "axis": "y", "stepped": true}
     ]
+  },
+  
+  "file_descriptor_count": {
+    "name": "File Descriptor Count",
+    "table_name": "check_file_descriptor_count",
+    "summary": "Allocated CVM/PCVM file descriptors from /proc/sys/fs/file-nr. Healthy < 20,000; warning at 20k-60k; critical >= 60k.",
+    "page": "stats_pages/time_series.html",
+    "parser": "file_descriptor_count",
+    "chart_type": "line",
+    "y_axis": "File Descriptors",
+    "is_percentage": false,
+    "endpoint_types": ["PE", "PC"],
+    "target_labels": {"PE": "Cluster", "PC": "PC"},
+    "datasets": [
+      {"key": "allocated", "label": "Allocated FDs", "color": "#1769b0", "axis": "y"}
+    ]
   }
-
 
 }
