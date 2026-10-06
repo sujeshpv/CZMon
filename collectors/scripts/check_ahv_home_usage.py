@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # --- Global Configurations ---
 DEF_UNAME = "admin"
-DEF_PWD = "Nutanix.123"
+DEF_PWD = "CZNutanix.1234"
 DEF_CVM_USER = "nutanix"
 CVM_SSH_KEY_PATH = os.path.join(
   os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
