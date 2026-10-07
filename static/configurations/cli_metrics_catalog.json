@@ -9,5 +9,11 @@
     "description": "Runs nodetool ring to verify Cassandra consistency",
     "command": ["nodetool -h 0 ring"],
     "endpoint_type": "PE"
+  },
+
+  "file_descriptor_count": {
+    "description": "Collects file-nr allocated/unused/file-max on each CVM/PCVM.",
+    "command": ["cat /proc/sys/fs/file-nr"],
+    "endpoint_type": ["PE", "PC"]
   }
 }

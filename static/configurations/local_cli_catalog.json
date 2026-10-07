@@ -38,5 +38,9 @@
   "snapshot_usage_tracker": {
   "description": "Tracks Recovery Point storage usage percentages",
   "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
+  },
+  "check_file_descriptor_count": {
+    "description": "Checks allocated file descriptor counts on CVM and PCVM hosts",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_file_descriptor_count.py"]
   }
 }

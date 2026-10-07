@@ -2,12 +2,17 @@ from common.connection.sqliteworker import Sqlite3Worker
 from common.connection.ssh_connect import Ssh
 from common.logger.logger import EntryExit, setup_logger
 from collectors.api_processor import ApiProcessor
+from collectors.scripts.check_file_descriptor_count import (
+  build_fanout_command,
+  parse_file_nr_output,
+)
 from common.exceptions.exceptions import *
 from library.const import NUTANIX
 from library.urls import CLUSTER
 import os
 import re
 import json
+import shlex
 from numbers import Number
 
 LOGGER = setup_logger(__name__)
@@ -91,6 +96,10 @@ class CliProcessor:
         return int(num)
     if header_key.endswith("_pct") and raw.isdigit():
       return int(raw)
+    if re.fullmatch(r"-?\d+", raw):
+      return int(raw)
+    if re.fullmatch(r"-?\d+\.\d+", raw):
+      return float(raw)
     return raw
 
   @EntryExit
@@ -164,10 +173,26 @@ class CliProcessor:
     return rows
 
   @EntryExit
+  def _parse_file_nr_output(self, output):
+    """Parse file-nr, top-process, and Hermes FD lines from CVM output."""
+    return parse_file_nr_output(output)
+
+  def _fanout_command(self, command):
+    """Build the svmips SSH fan-out used for PE and PC CLI metrics."""
+    return build_fanout_command(command)
+
+  @EntryExit
   def normalize_output(self, command, output):
     """
     Normalize command output for downstream UI/graph usage.
     """
+    file_nr_rows = self._parse_file_nr_output(output)
+    if file_nr_rows and "file-nr" in str(command or ""):
+      return {
+        "parser": "file_nr",
+        "command": command,
+        "rows": file_nr_rows
+      }
     rows = self._parse_table_like_output(output)
     if rows:
       return {
@@ -203,7 +228,11 @@ class CliProcessor:
     timeseries_rows = []
     if not isinstance(normalized_output, dict):
       return timeseries_rows
-    if normalized_output.get("parser") not in ("table_like", "recovery_points_scalar"):
+    if normalized_output.get("parser") not in (
+      "table_like",
+      "recovery_points_scalar",
+      "file_nr",
+    ):
       return timeseries_rows
 
     for row in normalized_output.get("rows", []):
@@ -274,10 +303,12 @@ class CliProcessor:
     try:
       for table_name, entity_data in config.items():
         endpoint_type = entity_data.get("endpoint_type")
+        if isinstance(endpoint_type, str):
+          endpoint_type = [endpoint_type]
         commands = entity_data.get("command", [])
         ip_endpoints = [
           (ip, et)
-          for et in endpoint_type
+          for et in (endpoint_type or [])
           for ip in os.environ.get(f"{et}_IPS", "").split(",")
           if ip
         ]
@@ -287,10 +318,7 @@ class CliProcessor:
             for command in commands:
               try:
                 values = {}
-                full_command = (f"bash -lc 'for i in $(svmips); "
-                                f"do echo \"================== $i "
-                                f"=================\"; ssh $i "
-                                f"{command}; done'")
+                full_command = self._fanout_command(command)
                 output = ssh_obj.execute(full_command)
                 LOGGER.info(
                   "Output for command '%s' on %s: %s",
