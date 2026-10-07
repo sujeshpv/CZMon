@@ -16,7 +16,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Configurations ---
 DEF_UNAME = "admin"
-DEF_PWD = "Nutanix.123"
+DEF_PWD = "CZNutanix.1234"
 
 logger = logging.getLogger(__name__)
 

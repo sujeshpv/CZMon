@@ -17,7 +17,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- Global Configurations ---
 MEMORY_UNDERUTILIZATION_THRESHOLD_PCT = 20.0
 DEF_UNAME = "admin"
-DEF_PWD = "Nutanix.123"
+DEF_PWD = "CZNutanix.1234"
 
 logger = logging.getLogger(__name__)
 

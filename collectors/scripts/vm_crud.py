@@ -16,7 +16,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Global Configurations ---
 DEF_USER = "admin"
-DEF_PWD = "Nutanix.123"
+DEF_PWD = "CZNutanix.1234"
 
 # Prefix for test VMs so anyone can easily track/change them
 VM_NAME_PREFIX = "sanity-"

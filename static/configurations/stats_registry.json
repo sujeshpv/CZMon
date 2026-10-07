@@ -73,8 +73,8 @@
     "chart_type": "line",
     "y_axis": "Usage %",
     "is_percentage": true,
-    "endpoint_types": ["PC", "PE"],
-    "target_labels": {"PC": "Cluster", "PE": "Cluster"},
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
     "datasets": [
       {"key": "cpu", "label": "CPU %", "color": "#1769b0", "axis": "y"},
       {"key": "memory", "label": "Memory %", "color": "#218838", "axis": "y"},
@@ -157,7 +157,20 @@
     "datasets": [
       {"key": "scan_status", "label": "Full Scan Status", "color": "#1769b0", "axis": "y"}
     ]
+  },
+  "ssh_connections": {
+    "name": "SSH Connections",
+    "table_name": "check_ssh_connections",
+    "summary": "ESTABLISHED SSH (port 22) connection counts across CVMs. Healthy is under 10 per CVM.",
+    "page": "stats_pages/time_series.html",
+    "parser": "ssh_connections",
+    "chart_type": "line",
+    "y_axis": "Connections",
+    "is_percentage": false,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "highest_established", "label": "Highest per CVM", "color": "#c82333", "axis": "y"}
+    ]
   }
-
-
 }
