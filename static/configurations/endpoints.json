@@ -1,14 +1,14 @@
 {
   "AZ1": [
     {
-      "type":"PC",
+      "type": "PC",
       "name": "",
       "ip": "",
       "user": "",
       "password": ""
     },
     {
-      "type":"PE",
+      "type": "PE",
       "name": "",
       "ip": "",
       "user": "",
@@ -17,14 +17,14 @@
   ],
   "AZ2": [
     {
-      "type":"PC",
+      "type": "PC",
       "name": "",
       "ip": "",
       "user": "",
       "password": ""
     },
     {
-      "type":"PE",
+      "type": "PE",
       "name": "",
       "ip": "",
       "user": "",
@@ -32,3 +32,4 @@
     }
   ]
 }
+
