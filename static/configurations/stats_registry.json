@@ -134,7 +134,9 @@
   "curator_full_scan": {
     "name": "Curator Full Scan",
     "table_name": "curator_full_scan",
-    "summary": "Curator Full Scan results collected over the last 90 days for each PE cluster, with the complete curator_cli response.",
+    "target_column": "ip",
+    "endpoint_types": ["PE"],
+    "summary": "Curator Full Scan results collected for each PE cluster, with the complete curator_cli response.",
     "page": "stats_pages/time_series.html",
     "parser": "curator_full_scan",
     "chart_type": "bar",
@@ -149,8 +151,7 @@
       "UnknownStatus": "#6c757d"
     },
     "require_target": true,
-    "max_points": 200,
-    "cli_catalog_entry": "curator_full_scan",
+    "show_all_points": true,
     "target_source": "az_pes",
     "target_labels": {"PE": "Cluster"},
     "datasets": [

@@ -2,14 +2,12 @@ from common.connection.sqliteworker import Sqlite3Worker
 from common.connection.ssh_connect import Ssh
 from common.logger.logger import EntryExit, setup_logger
 from collectors.api_processor import ApiProcessor
-from collectors import curator_full_scan
 from common.exceptions.exceptions import *
 from library.const import NUTANIX
 from library.urls import CLUSTER
 import os
 import re
 import json
-from datetime import datetime, timedelta, timezone
 from numbers import Number
 
 LOGGER = setup_logger(__name__)
@@ -263,222 +261,6 @@ class CliProcessor:
       self.db_worker.insert_row(table_name, row)
 
   @EntryExit
-  def _build_remote_command(self, command, fan_out=True):
-    """
-    Wrap a catalog command for remote execution.
-
-    With fan_out the command runs on every SVM returned by svmips, each
-    block prefixed with a host marker. Without it the command runs once in a
-    login shell on the target, for cluster-wide commands such as curator_cli.
-    """
-    if fan_out:
-      return (f"bash -lc 'for i in $(svmips); "
-              f"do echo \"================== $i "
-              f"=================\"; ssh $i "
-              f"{command}; done'")
-    return f"bash -lc '{command}'"
-
-  @EntryExit
-  def _get_cluster_timezone(self, ip):
-    """
-    Return the IANA timezone recorded for the cluster at ip, or None.
-    """
-    if "timezone" not in self.db_worker.get_columns(CLUSTER):
-      return None
-    return self.api_processor.fetch_dynamic_values(
-      f"$({CLUSTER}#timezone#clusterExternalIPAddress={ip})"
-    )
-
-  @EntryExit
-  def _lookup_cluster_identity(self, cluster_ip):
-    """
-    Return the cluster UUID and name recorded for cluster_ip in the clusters
-    table; values are None when no cluster has that external IP.
-    """
-    return self.api_processor.fetch_dynamic_values({
-      "cluster_id": f"$({CLUSTER}#uuid#clusterExternalIPAddress={cluster_ip})",
-      "cluster_name": f"$({CLUSTER}#name#clusterExternalIPAddress={cluster_ip})",
-    })
-
-  @EntryExit
-  def _cluster_vip_from_cvm(self, ssh_obj, ip, timeout=None):
-    """
-    Read the cluster virtual IP from the CVM's cluster configuration.
-
-    Used when the configured IP is not a cluster external IP (for example a
-    CVM IP). Returns None when it cannot be determined.
-    """
-    try:
-      exit_code, stdout, _ = ssh_obj.execute_with_status(
-        self._build_remote_command(
-          curator_full_scan.CLUSTER_VIP_COMMAND, fan_out=False
-        ),
-        timeout=timeout,
-      )
-    except Exception as err:
-      LOGGER.error(CZMonError(
-        "Failed reading cluster virtual IP from CVM",
-        cause=err,
-        context={"ip": ip}
-      ))
-      return None
-    if exit_code != 0:
-      return None
-    return curator_full_scan.parse_cluster_external_ip(stdout)
-
-  @EntryExit
-  def _latest_matching_curator_row(self, table_name, key_values, row):
-    """
-    Return the rowid of the cluster's latest Curator row if it holds the same
-    result as row (same scan, statuses and errors), otherwise None.
-    """
-    where = " AND ".join(f"{col} IS ?" for col in key_values)
-    columns = curator_full_scan.RESULT_IDENTITY_COLUMNS
-    latest = self.db_worker.execute(
-      f"SELECT rowid, {', '.join(columns)} FROM {table_name} "
-      f"WHERE {where} ORDER BY rowid DESC LIMIT 1",
-      list(key_values.values()),
-    )
-    if not latest:
-      return None
-    rowid, *stored = latest[0]
-    if list(stored) != [row[col] for col in columns]:
-      return None
-    return rowid
-
-  @EntryExit
-  def _expire_curator_rows(self, table_name, key_values, retention_days):
-    """
-    Delete this cluster's Curator rows written more than retention_days ago.
-    """
-    cutoff = (
-      datetime.now(timezone.utc) - timedelta(days=float(retention_days))
-    ).isoformat()
-    where = " AND ".join(f"{col} IS ?" for col in key_values)
-    self.db_worker.execute(
-      f"DELETE FROM {table_name} WHERE {where} AND created_at < ?",
-      list(key_values.values()) + [cutoff],
-    )
-
-  @EntryExit
-  def _refresh_curator_row(self, table_name, rowid, row):
-    """
-    Overwrite an existing Curator row with the latest collection of the same
-    result, refreshing created_at so time-range filters see it.
-    """
-    values = dict(row)
-    values["created_at"] = datetime.now(timezone.utc).isoformat()
-    assignments = ", ".join(f"{col} = ?" for col in values)
-    self.db_worker.execute(
-      f"UPDATE {table_name} SET {assignments} WHERE rowid = ?",
-      list(values.values()) + [rowid],
-    )
-
-  @EntryExit
-  def _collect_curator_full_scan(
-      self, ssh_obj, ip, command, table_name, fan_out=False, timeout=None,
-      connect_error=None,
-      retention_count=curator_full_scan.DEFAULT_RETENTION_COUNT,
-      retention_days=curator_full_scan.DEFAULT_RETENTION_DAYS):
-    """
-    Collect Curator Full Scan status for one cluster and store it.
-
-    A result that differs from the cluster's latest row is inserted as a new
-    row; a result identical to the latest row (same scan, statuses and
-    errors) refreshes that row instead, so repeated collections of one scan
-    do not create duplicate entries. Afterwards this cluster's rows older
-    than retention_days are deleted and at most retention_count are kept.
-
-    Parameters
-    ----------
-    ssh_obj : Ssh or None
-      Connected session, or None when connect_error is set.
-    ip : str
-      Framework target IP.
-    command : str
-      Catalog command.
-    table_name : str
-      Metric table.
-    fan_out : bool
-      Passed to _build_remote_command.
-    timeout : float, optional
-      Seconds to wait for the command.
-    connect_error : str, optional
-      Error text when the framework could not connect to the target.
-    retention_count : int
-      Maximum number of rows to keep per cluster.
-    retention_days : int
-      Rows written more than this many days ago are deleted.
-
-    Returns
-    -------
-    dict
-      The curator_full_scan result document.
-    """
-    exit_code, stdout, stderr = None, "", ""
-    execution_error = connect_error
-    execution_error_code = curator_full_scan.TARGET_UNREACHABLE
-    if connect_error is None:
-      full_command = self._build_remote_command(command, fan_out)
-      try:
-        exit_code, stdout, stderr = ssh_obj.execute_with_status(
-          full_command, timeout=timeout
-        )
-        LOGGER.info(
-          "Output for command '%s' on %s (exit=%s): %s",
-          full_command, ip, exit_code, stdout
-        )
-      except CZMonTimeoutError as err:
-        execution_error = str(err)
-        execution_error_code = curator_full_scan.COMMAND_TIMEOUT
-      except Exception as err:
-        execution_error = str(err)
-        execution_error_code = curator_full_scan.SSH_EXECUTION_FAILED
-    cluster_vip = ip
-    identity = self._lookup_cluster_identity(ip)
-    if not identity.get("cluster_id"):
-      cluster_vip = None
-      if ssh_obj is not None:
-        cluster_vip = self._cluster_vip_from_cvm(ssh_obj, ip, timeout)
-      if cluster_vip and cluster_vip != ip:
-        identity = self._lookup_cluster_identity(cluster_vip)
-    result = curator_full_scan.build_result(
-      cluster_ip=ip,
-      exit_code=exit_code,
-      stdout=stdout,
-      stderr=stderr,
-      cluster_id=identity.get("cluster_id"),
-      cluster_name=identity.get("cluster_name"),
-      cluster_timezone=self._get_cluster_timezone(cluster_vip or ip),
-      cluster_vip=cluster_vip,
-      command=command,
-      execution_error=execution_error,
-      execution_error_code=execution_error_code,
-    )
-    row = curator_full_scan.to_db_row(result)
-    key_values = {
-      col: row[col] for col in curator_full_scan.RECORD_KEY_COLUMNS
-    }
-    self.db_worker.ensure_schema(table_name, row)
-    latest_rowid = self._latest_matching_curator_row(table_name, key_values, row)
-    if latest_rowid is None:
-      self.db_worker.insert_row(table_name, row)
-    else:
-      self._refresh_curator_row(table_name, latest_rowid, row)
-    self._expire_curator_rows(table_name, key_values, retention_days)
-    self.db_worker.trim_rows(table_name, key_values, retention_count)
-    if result["collection_status"] != curator_full_scan.COLLECTION_SUCCESS:
-      LOGGER.error(CZMonError(
-        "Curator full scan not collected successfully",
-        context={
-          "ip": ip,
-          "collection_status": result["collection_status"],
-          "errors": [issue["code"] for issue in result["errors"]],
-        }
-      ))
-    return result
-
-  @EntryExit
   def process_data(self, config):
     """
     Execute CLI commands for given configuration and persist results.
@@ -493,15 +275,6 @@ class CliProcessor:
       for table_name, entity_data in config.items():
         endpoint_type = entity_data.get("endpoint_type")
         commands = entity_data.get("command", [])
-        fan_out = entity_data.get("fan_out", True)
-        parser = entity_data.get("parser")
-        timeout = entity_data.get("timeout_secs")
-        retention_count = entity_data.get(
-          "retention_count", curator_full_scan.DEFAULT_RETENTION_COUNT
-        )
-        retention_days = entity_data.get(
-          "retention_days", curator_full_scan.DEFAULT_RETENTION_DAYS
-        )
         ip_endpoints = [
           (ip, et)
           for et in endpoint_type
@@ -513,15 +286,11 @@ class CliProcessor:
             ssh_obj = Ssh(ip, NUTANIX)
             for command in commands:
               try:
-                if parser == curator_full_scan.METRIC_NAME:
-                  self._collect_curator_full_scan(
-                    ssh_obj, ip, command, table_name, fan_out, timeout,
-                    retention_count=retention_count,
-                    retention_days=retention_days
-                  )
-                  continue
                 values = {}
-                full_command = self._build_remote_command(command, fan_out)
+                full_command = (f"bash -lc 'for i in $(svmips); "
+                                f"do echo \"================== $i "
+                                f"=================\"; ssh $i "
+                                f"{command}; done'")
                 output = ssh_obj.execute(full_command)
                 LOGGER.info(
                   "Output for command '%s' on %s: %s",
@@ -570,21 +339,6 @@ class CliProcessor:
               }
             )
             LOGGER.error(error)
-            if parser == curator_full_scan.METRIC_NAME:
-              for command in commands:
-                try:
-                  self._collect_curator_full_scan(
-                    None, ip, command, table_name, fan_out, timeout,
-                    connect_error=str(ssh_err),
-                    retention_count=retention_count,
-                    retention_days=retention_days
-                  )
-                except Exception as persist_err:
-                  LOGGER.error(CZMonError(
-                    "Failed recording unreachable target",
-                    cause=persist_err,
-                    context={"ip": ip, "table": table_name}
-                  ))
             continue
     except Exception as err:
       if isinstance(err, CZMonError):

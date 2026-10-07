@@ -25,7 +25,3 @@ class CZMonError(Exception):
                 f"{type(self.cause).__name__}: {self.cause}{ctx}"
             )
         return f"{self.message}{ctx}"
-
-
-class CZMonTimeoutError(CZMonError):
-    """Raised when a remote operation exceeds its timeout."""

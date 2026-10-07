@@ -12,10 +12,6 @@ _PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
 DEFAULT_SSH_KEY_PATH = os.path.join(_PROJECT_ROOT, SSH, KEYS, NUTANIX)
-# CVMs run sshd with MaxSessions 1, so a new command channel is refused until
-# the server has finished closing the previous one.
-CHANNEL_OPEN_ATTEMPTS = 10
-CHANNEL_OPEN_RETRY_SECS = 0.5
 
 
 class Ssh:
@@ -172,92 +168,24 @@ class Ssh:
     try:
       if isinstance(cmd, (list, tuple)):
         cmd = " ".join(cmd)
-      exit_status, output, error_output = self.execute_with_status(cmd)
-      if exit_status == 0:
-        return output.strip()
-      raise CZMonError(
-        "SSH command execution failed",
-        context={
-          "remote_ip": self.remote_ip,
-          "command": cmd,
-          "error": error_output.strip(),
-        },
-      )
-    except Exception as err:
-      if isinstance(err, CZMonError):
-        raise
-      error = CZMonError(
-        "SSH execution exception",
-        cause=err,
-        context={
-          "remote_ip": self.remote_ip,
-          "command": cmd,
-        },
-      )
-      LOG.error(error)
-      raise error
-
-  def execute_with_status(self, cmd, timeout=None):
-    """
-    Execute command on remote host without raising on non-zero exit.
-
-    Parameters
-    ----------
-    cmd : str or list
-        Command to execute
-    timeout : float, optional
-        Seconds to wait for the command to exit. None waits indefinitely.
-
-    Returns
-    -------
-    tuple
-        (exit_code, stdout, stderr); stdout and stderr are not stripped.
-
-    Raises
-    ------
-    CZMonTimeoutError
-        If the command does not exit within timeout
-    CZMonError
-        If session is invalid or the command cannot be executed
-    """
-    try:
-      if isinstance(cmd, (list, tuple)):
-        cmd = " ".join(cmd)
       if not self.ssh_handle:
         raise CZMonError(
           "SSH session not established",
           context={"remote_ip": self.remote_ip}
         )
-      for attempt in range(CHANNEL_OPEN_ATTEMPTS):
-        try:
-          stdin, stdout, stderr = self.ssh_handle.exec_command(
-            cmd, timeout=timeout
-          )
-          break
-        except paramiko.ChannelException:
-          if attempt == CHANNEL_OPEN_ATTEMPTS - 1:
-            raise
-          time.sleep(CHANNEL_OPEN_RETRY_SECS)
-      channel = stdout.channel
-      if timeout is not None:
-        deadline = time.monotonic() + timeout
-        while not channel.exit_status_ready():
-          if time.monotonic() >= deadline:
-            channel.close()
-            raise CZMonTimeoutError(
-              "SSH command timed out",
-              context={
-                "remote_ip": self.remote_ip,
-                "command": cmd,
-                "timeout_secs": timeout,
-              },
-            )
-          time.sleep(0.2)
-      exit_status = channel.recv_exit_status()
-      output = stdout.read().decode()
-      error_output = stderr.read().decode()
-      channel.close()
-      return exit_status, output, error_output
+      stdin, stdout, stderr = self.ssh_handle.exec_command(cmd)
+      exit_status = stdout.channel.recv_exit_status()
+      if exit_status == 0:
+        return stdout.read().decode().strip()
+      error_msg = stderr.read().decode().strip()
+      raise CZMonError(
+        "SSH command execution failed",
+        context={
+          "remote_ip": self.remote_ip,
+          "command": cmd,
+          "error": error_msg,
+        },
+      )
     except Exception as err:
       if isinstance(err, CZMonError):
         raise

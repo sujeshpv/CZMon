@@ -123,20 +123,10 @@
     return index >= 0 && index < statusLevels.length ? statusLevels[index] : "";
   }
 
-  function formatLocalTime(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "";
-    return date.toLocaleString([], {
-      year: "numeric", month: "short", day: "numeric",
-      hour: "2-digit", minute: "2-digit", second: "2-digit"
-    });
-  }
-
   function curatorEndTimeLabel(item) {
     const fullScan = item.data?.full_scan || {};
-    if (fullScan.end_time) return formatLocalTime(fullScan.end_time);
-    if (fullScan.end_time_raw) return `${fullScan.end_time_raw} (cluster time)`;
-    return `${formatLocalTime(item.timestamp)} (collected, no Full Scan)`;
+    if (fullScan.end_time) return fullScan.end_time;
+    return `${item.timestamp} (collected, no Full Scan)`;
   }
 
   function chartScales() {
@@ -495,19 +485,14 @@
     addDetailTable(["Field", "Value"], [
       ["Cluster", `${show(details?.cluster_name)} (${show(details?.cluster_ip)})`],
       ["Cluster Id", show(details?.cluster_id)],
-      ["Collected At (local)", details?.collected_at ? formatLocalTime(details.collected_at) : "N/A"],
+      ["Collected At", show(details?.collected_at)],
       ["Command", show(details?.command)],
       ["Job Name", show(fullScan.job_name)],
       ["Job Id", show(fullScan.job_id)],
       ["Master Handle", show(fullScan.master_handle)],
       ["Incarnation Id", show(fullScan.incarnation_id)],
-      ["Start Time (raw)", show(fullScan.start_time_raw)],
-      ["End Time (raw)", show(fullScan.end_time_raw)],
-      ["Start Time (local)", fullScan.start_time ? formatLocalTime(fullScan.start_time) : "N/A"],
-      ["End Time (local)", fullScan.end_time ? formatLocalTime(fullScan.end_time) : "N/A"],
-      ["Start Time (UTC)", show(fullScan.start_time)],
-      ["End Time (UTC)", show(fullScan.end_time)],
-      ["Timestamp Timezone", show(fullScan.timestamp_timezone)]
+      ["Start Time", show(fullScan.start_time)],
+      ["End Time", show(fullScan.end_time)]
     ]);
     const issues = [...(details?.errors || []).map((issue) => ["Error", issue.code, issue.message, issue.action]),
       ...(details?.warnings || []).map((issue) => ["Warning", issue.code, issue.message, issue.action])];

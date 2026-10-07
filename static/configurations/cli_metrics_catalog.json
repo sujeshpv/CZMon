@@ -12,13 +12,8 @@
   },
 
   "curator_full_scan": {
-    "description": "Last successful Curator Full Scan per PE cluster; curator_cli is cluster-wide so it runs once per cluster instead of on every SVM.",
-    "command": ["curator_cli get_last_successful_scans"],
-    "endpoint_type": ["PE"],
-    "fan_out": false,
-    "parser": "curator_full_scan",
-    "timeout_secs": 120,
-    "retention_days": 90,
-    "retention_count": 180
+    "description": "Last successful Curator scans of each PE, parsed by collectors/scripts/curator_full_scan.py. curator_cli is cluster-wide, so the loop stops at the first CVM reachable over SSH (exit 255 means SSH failed). The CZMON_* lines record the curator_cli exit code and the cluster VIP.",
+    "command": ["/usr/local/nutanix/bin/curator_cli get_last_successful_scans 2>&1 | grep -v -E ^[IWEF][0-9]{8}; rc=${PIPESTATUS[0]}; echo CZMON_EXIT_CODE=$rc; echo CZMON_$(zeus_config_printer 2>/dev/null | grep ^cluster_external_ip); [ $rc -ne 255 ] && break"],
+    "endpoint_type": ["PE"]
   }
 }

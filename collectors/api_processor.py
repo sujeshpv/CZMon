@@ -252,9 +252,7 @@ class ApiProcessor:
               "endpoint": PC_CLUSTER_VERSION_PATH + CLUSTERS_LIST
           }
       }
-      values = [
-        "uuid", "name", "clusterExternalIPAddress", "fullVersion", "timezone"
-      ]
+      values = ["uuid", "name", "clusterExternalIPAddress", "fullVersion"]
       for system, config in systems.items():
         for ip in config["ips"]:
           try:

@@ -7,7 +7,9 @@ from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from urllib.parse import quote_plus
 from library.const import *
-from collectors.curator_full_scan import scan_status_category
+from collectors.scripts.curator_full_scan import (
+  build_result_from_cli_row, scan_status_category,
+)
 import json
 import math
 import os
@@ -1409,53 +1411,52 @@ def _load_stats_registry():
     except TemplateDoesNotExist as error:
       raise ValueError(f"Page configured for '{stat_key}' does not exist: {page}") from error
 
-    if config.get("cli_catalog_entry"):
-      config = {
-        **config,
-        "endpoint_types": _cli_catalog_endpoint_types(config["cli_catalog_entry"]),
-      }
-
     registry[str(stat_key)] = config
 
   return registry
 
 
-def _cli_catalog_endpoint_types(entry_name):
-  """Return the endpoint types a cli_metrics_catalog.json entry executes on."""
-  catalog_path = os.path.join(
-    dj_settings.BASE_DIR, STATIC, CONFIGURE, CLI_METRICS_CATALOG_JSON
-  )
-  with open(catalog_path, "r", encoding="utf-8") as catalog_file:
-    catalog = json.load(catalog_file)
-  entry = catalog.get(entry_name)
-  if not isinstance(entry, dict):
-    raise ValueError(f"CLI catalog entry '{entry_name}' is not configured.")
-  endpoint_types = entry.get("endpoint_type") or []
-  if isinstance(endpoint_types, str):
-    endpoint_types = [endpoint_types]
-  return [str(item).strip().upper() for item in endpoint_types if str(item).strip()]
+def _curator_clusters(conn):
+  """Map cluster virtual IPs to the latest uuid and name in the clusters table."""
+  clusters = {}
+  try:
+    rows = conn.execute(
+      """
+      SELECT clusterExternalIPAddress, uuid, name FROM clusters
+      WHERE clusterExternalIPAddress IS NOT NULL
+      ORDER BY created_at DESC
+      """
+    )
+    for vip, uuid, name in rows:
+      clusters.setdefault(str(vip).strip(), {"uuid": uuid, "name": name})
+  except sqlite3.Error:
+    return {}
+  return clusters
 
 
-def _stats_table_target_names(table_name):
-  """Map target IPs to the latest cluster name recorded in a stats table."""
+def _curator_target_names(table_name):
+  """Map Curator target IPs to the cluster name of their latest collection."""
   db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
   names = {}
   if not os.path.exists(db_path):
     return names
   try:
     with sqlite3.connect(db_path) as conn:
+      conn.row_factory = sqlite3.Row
       columns = {row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')}
-      if not {"ip", "cluster_name", "created_at"} <= columns:
+      if not {"ip", "output", "created_at"} <= columns:
         return names
+      clusters = _curator_clusters(conn)
       rows = conn.execute(
-        f"""
-        SELECT ip, cluster_name FROM "{table_name}"
-        WHERE ip IS NOT NULL AND cluster_name IS NOT NULL AND cluster_name != ''
-        ORDER BY created_at DESC
-        """
+        f'SELECT * FROM "{table_name}" WHERE ip IS NOT NULL ORDER BY created_at DESC'
       )
-      for ip, name in rows:
-        names.setdefault(str(ip).strip(), str(name))
+      for row in rows:
+        ip = str(row["ip"]).strip()
+        if not ip or ip in names:
+          continue
+        name = build_result_from_cli_row(dict(row), clusters).get("cluster_name")
+        if name:
+          names[ip] = str(name)
   except sqlite3.Error:
     return {}
   return names
@@ -1501,7 +1502,7 @@ def stats_view(request):
           ctx["azs"] = list(az_to_pes)
           ctx["stats_az_to_pes"] = az_to_pes
           ctx["stats_target_names"] = {
-            **_stats_table_target_names(registry[selected_key]["table_name"]),
+            **_curator_target_names(registry[selected_key]["table_name"]),
             **ctx["stats_target_names"],
           }
   except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -1780,10 +1781,7 @@ def stats_data_api(request):
     return JsonResponse({"error": "Unsupported time range."}, status=400)
   time_modifier = time_map[range_key]
   table_name = config["table_name"]
-  try:
-    max_points = max(1, int(config.get("max_points", 100)))
-  except (TypeError, ValueError):
-    max_points = 100
+  limit_clause = "" if config.get("show_all_points") else "LIMIT 100"
   data_points = []
 
   try:
@@ -1807,13 +1805,11 @@ def stats_data_api(request):
 
       where = ["created_at >= datetime('now', ?)"]
       params = [time_modifier]
-      target_column = next(
-        (column for column in ("ip_address", "ip") if column in columns), None
-      )
-      if target and target_column:
+      target_column = config.get("target_column", "ip_address")
+      if target and target_column in columns:
         where.append(f"{target_column} = ?")
         params.append(target)
-      elif endpoint_type and target_column:
+      elif endpoint_type and target_column in columns:
         if endpoint_ips:
           placeholders = ", ".join("?" for _ in endpoint_ips)
           where.append(f"{target_column} IN ({placeholders})")
@@ -1825,20 +1821,26 @@ def stats_data_api(request):
         SELECT * FROM "{table_name}"
         WHERE {' AND '.join(where)}
         ORDER BY created_at DESC
-        LIMIT ?
+        {limit_clause}
       """
-      rows = cursor.execute(query, params + [max_points]).fetchall()
+      rows = cursor.execute(query, params).fetchall()
+      curator_clusters = (
+        _curator_clusters(conn) if config.get("parser") == "curator_full_scan" else None
+      )
 
       for row in rows:
         row_dict = dict(row)
         ip = (
-          row_dict.get("ip_address")
+          row_dict.get(target_column)
+          or row_dict.get("ip_address")
           or row_dict.get("cluster_name")
           or row_dict.get("ip")
           or "Unknown"
         )
         raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
-        if isinstance(raw_data, (dict, list)):
+        if curator_clusters is not None:
+          payload = build_result_from_cli_row(row_dict, curator_clusters)
+        elif isinstance(raw_data, (dict, list)):
           payload = raw_data
         else:
           try:

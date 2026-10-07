@@ -427,52 +427,6 @@ class Sqlite3Worker(threading.Thread):
       raise error
 
   @EntryExit
-  def trim_rows(self, table_name, key_values, keep):
-    """
-    Delete all but the newest keep rows that match key_values.
-
-    Key columns are compared with ``IS`` so NULL keys match NULL. Rows are
-    ordered by insertion (rowid), so the most recently inserted are kept.
-
-    Parameters
-    ----------
-    table_name : str
-    key_values : dict
-      Column/value pairs identifying the rows to trim.
-    keep : int
-      Number of newest matching rows to retain; must be at least 1.
-    """
-    try:
-      if not key_values or int(keep) < 1:
-        raise CZMonError(
-          "trim_rows requires key_values and keep >= 1",
-          context={"table": table_name, "keep": keep}
-        )
-      where = " AND ".join(f"{col} IS ?" for col in key_values)
-      params = list(key_values.values())
-      query = f"""
-      DELETE FROM {table_name}
-      WHERE {where}
-      AND rowid NOT IN (
-        SELECT rowid FROM {table_name}
-        WHERE {where}
-        ORDER BY rowid DESC
-        LIMIT ?
-      )
-      """
-      self.execute(query, params + params + [int(keep)])
-    except Exception as err:
-      if isinstance(err, CZMonError):
-        raise
-      error = CZMonError(
-        "Failed trimming rows",
-        cause=err,
-        context={"table": table_name}
-      )
-      LOG.error(error)
-      raise error
-
-  @EntryExit
   def get_column_values(self, table_name, column_name):
     """
     Retrieve all values from a specific column.

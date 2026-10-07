@@ -1,25 +1,22 @@
-"""
-Curator full-scan status parser for the ``curator_full_scan`` CLI metric.
+"""Curator Full Scan status for the ``curator_full_scan`` CLI metric.
 
-Parses the output of ``curator_cli get_last_successful_scans``, selects only
-the table whose ``Job Name`` is exactly ``Full Scan`` and builds the JSON
-document that CliProcessor stores in the metric table's ``output_json``
-column and the Stats page renders.
+``python runner.py --run-type cli`` runs the ``curator_full_scan`` command of
+cli_metrics_catalog.json on every PE and stores its raw output in the
+curator_full_scan table, like every other CLI metric. This module turns one
+stored row into the Curator Full Scan result document shown on the Stats
+page: it reads the CVM marker, exit code and cluster VIP that the catalog
+command prints, selects only the table whose ``Job Name`` is exactly
+``Full Scan`` and classifies the result. Start and end times are reported
+exactly as curator_cli prints them.
 """
 
-import ipaddress
-import json
 import re
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 METRIC_NAME = "curator_full_scan"
 COMMAND = "curator_cli get_last_successful_scans"
-CLUSTER_VIP_COMMAND = "zeus_config_printer | grep ^cluster_external_ip:"
 FULL_SCAN_JOB_NAME = "Full Scan"
 STATUS_SUCCEEDED = "Succeeded"
 SUCCESS_STATUS_VALUES = ("0", "succeeded")
-TIMESTAMP_FORMAT = "%Y %b %d %H:%M:%S"
 SCAN_STATUS_UNKNOWN = "UnknownStatus"
 _SCAN_STATUS_ALIASES = {
   "running": "Running",
@@ -28,12 +25,6 @@ _SCAN_STATUS_ALIASES = {
   "canceled": "Canceled",
   "cancelled": "Canceled",
 }
-RECORD_KEY_COLUMNS = ("metric_name", "cluster_key", "ip")
-RESULT_IDENTITY_COLUMNS = (
-  "collection_status", "execution_id", "full_scan_status_raw", "error_codes",
-)
-DEFAULT_RETENTION_DAYS = 90
-DEFAULT_RETENTION_COUNT = 180
 
 COLLECTION_SUCCESS = "success"
 COLLECTION_UNAVAILABLE = "unavailable"
@@ -41,12 +32,8 @@ COLLECTION_FAILED = "failed"
 
 EXECUTION_COMPLETED = "completed"
 EXECUTION_FAILED = "failed"
-EXECUTION_TIMED_OUT = "timed_out"
-EXECUTION_NOT_EXECUTED = "not_executed"
 
-TARGET_UNREACHABLE = "TARGET_UNREACHABLE"
 SSH_EXECUTION_FAILED = "SSH_EXECUTION_FAILED"
-COMMAND_TIMEOUT = "COMMAND_TIMEOUT"
 COMMAND_FAILED = "COMMAND_FAILED"
 NO_CURATOR_MASTER = "NO_CURATOR_MASTER"
 SCAN_STAT_PROTO_NOT_FOUND = "SCAN_STAT_PROTO_NOT_FOUND"
@@ -54,31 +41,18 @@ EMPTY_OUTPUT = "EMPTY_OUTPUT"
 MALFORMED_OUTPUT = "MALFORMED_OUTPUT"
 FULL_SCAN_NOT_FOUND = "FULL_SCAN_NOT_FOUND"
 FULL_SCAN_NOT_SUCCEEDED = "FULL_SCAN_NOT_SUCCEEDED"
-TIMEZONE_UNKNOWN = "TIMEZONE_UNKNOWN"
 CLUSTER_ID_UNRESOLVED = "CLUSTER_ID_UNRESOLVED"
 
 _FAILED_CODES = {
-  TARGET_UNREACHABLE, SSH_EXECUTION_FAILED, COMMAND_TIMEOUT,
-  COMMAND_FAILED, EMPTY_OUTPUT, MALFORMED_OUTPUT,
+  SSH_EXECUTION_FAILED, COMMAND_FAILED, EMPTY_OUTPUT, MALFORMED_OUTPUT,
 }
 _CURATOR_CONDITION_CODES = {NO_CURATOR_MASTER, SCAN_STAT_PROTO_NOT_FOUND}
 _EXECUTION_ERRORS = {
-  TARGET_UNREACHABLE: (
-    EXECUTION_NOT_EXECUTED,
-    "Could not connect to target {ip}: {detail}",
-    "Verify the PE is reachable on port 22 and the framework SSH key "
-    "(ssh/keys/nutanix) is authorized for the nutanix user on its CVMs.",
-  ),
   SSH_EXECUTION_FAILED: (
     EXECUTION_FAILED,
-    "Remote execution of '{command}' failed on {ip}: {detail}",
-    "Verify the SSH session to the CVM and re-run the collector.",
-  ),
-  COMMAND_TIMEOUT: (
-    EXECUTION_TIMED_OUT,
-    "'{command}' did not finish on {ip}: {detail}",
-    "Check Curator responsiveness on the cluster or raise timeout_secs for "
-    "curator_full_scan in cli_metrics_catalog.json.",
+    "'{command}' could not be run on {ip}: {detail}",
+    "Check that the PE CVMs can reach each other over SSH and that the "
+    "curator_full_scan command in cli_metrics_catalog.json is unchanged.",
   ),
 }
 
@@ -105,29 +79,25 @@ _NO_MASTER_RE = re.compile(r"no curator master", re.IGNORECASE)
 _PROTO_NOT_FOUND_RE = re.compile(
   r"curator scan stat proto not found", re.IGNORECASE
 )
-_CLUSTER_EXTERNAL_IP_RE = re.compile(
-  r'^\s*cluster_external_ip:\s*"?(?P<ip>[^"\s]+)"?\s*$', re.MULTILINE
-)
-
-
-def parse_cluster_external_ip(output):
-  """
-  Return the cluster virtual IP from ``zeus_config_printer`` output, or None.
-  """
-  match = _CLUSTER_EXTERNAL_IP_RE.search(output or "")
-  if not match:
-    return None
-  try:
-    return str(ipaddress.ip_address(match.group("ip")))
-  except ValueError:
-    return None
-
-
-def _utc_now_iso():
-  return datetime.now(timezone.utc).isoformat()
 
 
 def _issue(code, message, action):
+  """
+  Build one entry of a result's ``errors`` or ``warnings`` list.
+
+  Parameters
+  ----------
+  code : str
+    Issue code, e.g. ``COMMAND_FAILED``.
+  message : str
+    What went wrong.
+  action : str
+    What the operator should check.
+
+  Returns
+  -------
+  dict
+  """
   return {"code": code, "message": message, "action": action}
 
 
@@ -176,6 +146,18 @@ def parse_scan_tables(output):
 
 
 def _job_name(table):
+  """
+  Return the ``Job Name`` value of a parsed scan table.
+
+  Parameters
+  ----------
+  table : list
+    ``(key, value)`` tuples of one table from parse_scan_tables.
+
+  Returns
+  -------
+  str or None
+  """
   return next((value for key, value in table if key == "job name"), None)
 
 
@@ -184,6 +166,15 @@ def normalize_status(status_raw):
   Map Curator success values (``0`` or ``Succeeded``) to ``Succeeded``.
 
   Any other value is returned stripped but otherwise unchanged.
+
+  Parameters
+  ----------
+  status_raw : str or None
+    ``Status`` value exactly as printed by curator_cli.
+
+  Returns
+  -------
+  str or None
   """
   if status_raw is None:
     return None
@@ -200,6 +191,16 @@ def scan_status_category(status_raw):
   Accepts plain (``Succeeded``), numeric (``0``) and enum-style
   (``kFailed``) values. Anything unrecognised, including a missing Full Scan,
   maps to ``UnknownStatus``.
+
+  Parameters
+  ----------
+  status_raw : str or None
+    ``Status`` value exactly as printed by curator_cli.
+
+  Returns
+  -------
+  str
+    One of Succeeded, Running, Failed, Canceled or UnknownStatus.
   """
   if not status_raw or not status_raw.strip():
     return SCAN_STATUS_UNKNOWN
@@ -211,71 +212,41 @@ def scan_status_category(status_raw):
   return _SCAN_STATUS_ALIASES.get(value.lower(), SCAN_STATUS_UNKNOWN)
 
 
-def _resolve_timezone(timezone_name):
-  if not timezone_name:
-    return None
-  try:
-    return ZoneInfo(timezone_name)
-  except (ZoneInfoNotFoundError, ValueError):
-    return None
-
-
-def parse_timestamp(raw, timezone_name):
+def _to_int(value):
   """
-  Convert a Curator timestamp (``2026 Sep 24 13:40:08``) to ISO-8601 UTC.
-
-  Curator prints cluster-local wall-clock time without a zone, so the value
-  is only converted when the cluster's IANA timezone is known.
+  Convert a table value to int.
 
   Parameters
   ----------
-  raw : str
-    Timestamp exactly as printed by curator_cli.
-  timezone_name : str or None
-    IANA timezone of the cluster, e.g. ``UTC`` or ``Asia/Kolkata``.
+  value : str or None
+    Value to convert.
 
   Returns
   -------
-  str or None
-    ISO-8601 timestamp in UTC, or None if the timezone is unknown or the
-    raw value cannot be parsed.
+  int or None
+    None when the value is not an integer.
   """
-  tzinfo = _resolve_timezone(timezone_name)
-  if not raw or tzinfo is None:
-    return None
-  try:
-    local = datetime.strptime(raw.strip(), TIMESTAMP_FORMAT)
-  except ValueError:
-    return None
-  return local.replace(tzinfo=tzinfo).astimezone(timezone.utc).isoformat()
-
-
-def _is_valid_timestamp(raw):
-  try:
-    datetime.strptime((raw or "").strip(), TIMESTAMP_FORMAT)
-    return True
-  except ValueError:
-    return False
-
-
-def _to_int(value):
   try:
     return int(str(value).strip())
   except (TypeError, ValueError):
     return None
 
 
-def _build_full_scan(table, cluster_timezone):
+def _build_full_scan(table):
   """
   Build the ``full_scan`` object from a parsed Full Scan table.
+
+  Parameters
+  ----------
+  table : list
+    ``(key, value)`` tuples of the Full Scan table from parse_scan_tables.
 
   Returns
   -------
   tuple
-    ``(full_scan, errors, warnings)``
+    ``(full_scan, errors)``
   """
   errors = []
-  warnings = []
   raw = {}
   duplicates = []
   for key, value in table:
@@ -293,10 +264,6 @@ def _build_full_scan(table, cluster_timezone):
     field for field in _INTEGER_FIELDS
     if raw.get(field) and _to_int(raw[field]) is None
   ]
-  bad_timestamps = [
-    field for field in ("start_time", "end_time")
-    if raw.get(field) and not _is_valid_timestamp(raw[field])
-  ]
   problems = []
   if missing:
     problems.append(f"missing fields {missing}")
@@ -304,10 +271,6 @@ def _build_full_scan(table, cluster_timezone):
     problems.append(f"empty fields {empty}")
   if not_integer:
     problems.append(f"non-integer fields {not_integer}")
-  if bad_timestamps:
-    problems.append(
-      f"timestamps not in '{TIMESTAMP_FORMAT}' format {bad_timestamps}"
-    )
   if duplicates:
     problems.append(f"duplicate fields {sorted(set(duplicates))}")
   if problems:
@@ -316,17 +279,6 @@ def _build_full_scan(table, cluster_timezone):
       "Full Scan table is incomplete or malformed: " + "; ".join(problems) + ".",
       "Inspect command_result.raw_output; the curator_cli output format may "
       "have changed or the output was truncated.",
-    ))
-
-  timezone_known = _resolve_timezone(cluster_timezone) is not None
-  if not timezone_known:
-    warnings.append(_issue(
-      TIMEZONE_UNKNOWN,
-      f"Cluster timezone {cluster_timezone!r} is unknown or invalid; "
-      "start_time/end_time are left null and only the raw cluster-local "
-      "values are reported.",
-      "Run the api collector so the clusters table records the Prism "
-      "cluster timezone for this cluster.",
     ))
 
   status_raw = raw.get("status")
@@ -338,11 +290,8 @@ def _build_full_scan(table, cluster_timezone):
     "incarnation_id": _to_int(raw.get("incarnation_id")),
     "status_raw": status_raw,
     "status": normalize_status(status_raw),
-    "start_time_raw": raw.get("start_time"),
-    "end_time_raw": raw.get("end_time"),
-    "start_time": parse_timestamp(raw.get("start_time"), cluster_timezone),
-    "end_time": parse_timestamp(raw.get("end_time"), cluster_timezone),
-    "timestamp_timezone": cluster_timezone if timezone_known else None,
+    "start_time": raw.get("start_time"),
+    "end_time": raw.get("end_time"),
   }
 
   execution_id = full_scan["execution_id"]
@@ -356,10 +305,24 @@ def _build_full_scan(table, cluster_timezone):
       "Check Curator health and scan history on the Curator master "
       "(http://<curator-master>:2010) and curator logs in ~/data/logs.",
     ))
-  return full_scan, errors, warnings
+  return full_scan, errors
 
 
 def _collection_status(errors, full_scan):
+  """
+  Classify a result as success, unavailable or failed.
+
+  Parameters
+  ----------
+  errors : list
+    Issues collected by build_result.
+  full_scan : dict or None
+    Parsed Full Scan object, or None when no Full Scan table was parsed.
+
+  Returns
+  -------
+  str
+  """
   codes = {issue["code"] for issue in errors}
   hard_failures = codes & _FAILED_CODES
   if codes & _CURATOR_CONDITION_CODES:
@@ -378,12 +341,12 @@ def build_result(
     stderr="",
     cluster_id=None,
     cluster_name=None,
-    cluster_timezone=None,
     cluster_vip=None,
     command=COMMAND,
     collected_at=None,
     execution_error=None,
     execution_error_code=SSH_EXECUTION_FAILED,
+    cluster_info_error=None,
 ):
   """
   Build the ``curator_full_scan`` JSON document for one cluster.
@@ -398,7 +361,7 @@ def build_result(
   Parameters
   ----------
   cluster_ip : str
-    Framework target IP the command ran against.
+    PE IP from endpoints.json the command ran against (VIP or CVM IP).
   exit_code : int or None
     Remote exit code; None when the command did not complete.
   stdout : str
@@ -409,19 +372,19 @@ def build_result(
     Cluster UUID from the framework's clusters table.
   cluster_name : str, optional
     Cluster name from the framework's clusters table.
-  cluster_timezone : str, optional
-    IANA timezone of the cluster; timestamps stay null when unknown.
   cluster_vip : str, optional
-    Cluster virtual IP the identity was resolved from; equals cluster_ip
-    when the endpoint is configured by virtual IP.
+    Cluster virtual IP read from the CVM; equals cluster_ip when the
+    endpoint is configured by virtual IP.
   command : str
-    Catalog command that was executed.
+    Command that was executed.
   collected_at : str, optional
-    ISO-8601 collection time; defaults to now (UTC).
+    When the row was stored (the table's ``created_at``).
   execution_error : str, optional
     Error detail when the command could not be run to completion.
   execution_error_code : str
-    TARGET_UNREACHABLE, SSH_EXECUTION_FAILED or COMMAND_TIMEOUT.
+    Issue code for execution_error; SSH_EXECUTION_FAILED.
+  cluster_info_error : str, optional
+    Why the cluster UUID could not be resolved.
 
   Returns
   -------
@@ -505,20 +468,16 @@ def build_result(
             f"Found {len(full_tables)} Full Scan tables; expected exactly one.",
             "Inspect command_result.raw_output for duplicated output.",
           ))
-        full_scan, scan_errors, scan_warnings = _build_full_scan(
-          full_tables[0], cluster_timezone
-        )
+        full_scan, scan_errors = _build_full_scan(full_tables[0])
         errors.extend(scan_errors)
-        warnings.extend(scan_warnings)
 
   if not cluster_id:
     warnings.append(_issue(
       CLUSTER_ID_UNRESOLVED,
-      f"No cluster UUID found in the clusters table for {cluster_ip} "
-      f"(cluster virtual IP: {cluster_vip or 'unknown'}); the record is keyed "
-      "by target IP instead.",
-      "Run the api collector so the clusters table is populated, and check "
-      "that the cluster has a virtual IP configured.",
+      f"Cluster UUID for {cluster_ip} could not be resolved: "
+      f"{cluster_info_error or 'not found in the clusters table'}.",
+      "Run the collector again so the clusters table is populated for this "
+      "PE, and check that the cluster has a virtual IP configured.",
     ))
 
   master = _MASTER_RE.search(stdout)
@@ -538,7 +497,7 @@ def build_result(
     "collection_status": _collection_status(errors, full_scan),
     "command_execution_status": execution_status,
     "full_scan_available": full_scan_available,
-    "collected_at": collected_at or _utc_now_iso(),
+    "collected_at": collected_at,
     "command": command,
     "curator_master": master.group("master") if master else None,
     "full_scan": full_scan,
@@ -552,39 +511,134 @@ def build_result(
   }
 
 
-def to_db_row(result):
-  """
-  Map a ``build_result`` document to a CLI metric table row.
 
-  Keeps the ``command``/``output``/``output_json``/``ip``/``cluster_name``
-  columns used by the other CLI metrics and adds queryable copies of the
-  status fields. ``cluster_key`` is the framework cluster UUID, or
-  ``ip:<target>`` when the UUID cannot be resolved; together with
-  ``metric_name`` it groups one cluster's collection history.
+SSH_FAILED_EXIT_CODE = 255
+_HOST_MARKER_RE = re.compile(r"^=+\s*(?P<ip>\d+\.\d+\.\d+\.\d+)\s*=+\s*$")
+_EXIT_CODE_RE = re.compile(r"^CZMON_EXIT_CODE=(?P<code>-?\d+)\s*$")
+_CLUSTER_VIP_RE = re.compile(
+  r'^CZMON_cluster_external_ip:\s*"?(?P<ip>[^"\s]+)"?\s*$'
+)
+
+
+def _split_cvm_blocks(output):
   """
-  full_scan = result.get("full_scan") or {}
-  command_result = result["command_result"]
-  execution_id = full_scan.get("execution_id")
-  exit_code = command_result["exit_code"]
-  return {
-    "metric_name": result["metric_name"],
-    "cluster_key": result["cluster_id"] or f"ip:{result['cluster_ip']}",
-    "cluster_id": result["cluster_id"],
-    "cluster_name": result["cluster_name"],
-    "ip": result["cluster_ip"],
-    "cluster_vip": result["cluster_vip"],
-    "command": result["command"],
-    "collection_status": result["collection_status"],
-    "command_execution_status": result["command_execution_status"],
-    "exit_code": str(exit_code) if exit_code is not None else None,
-    "full_scan_available": "true" if result["full_scan_available"] else "false",
-    "full_scan_status": full_scan.get("status"),
-    "full_scan_status_raw": full_scan.get("status_raw"),
-    "execution_id": str(execution_id) if execution_id is not None else None,
-    "full_scan_end_time_raw": full_scan.get("end_time_raw"),
-    "error_codes": ",".join(issue["code"] for issue in result["errors"]),
-    "output": command_result["raw_output"],
-    "stderr": command_result["stderr"],
-    "output_json": json.dumps(result),
-    "collected_at": result["collected_at"],
+  Split stored CLI output into the per-CVM blocks printed by the svmips loop.
+
+  Parameters
+  ----------
+  output : str
+    Output stored by CliProcessor for the curator_full_scan command.
+
+  Returns
+  -------
+  list
+    ``(cvm_ip, lines)`` tuples in output order; cvm_ip is None for output
+    before the first marker.
+  """
+  blocks = []
+  cvm_ip, lines = None, []
+  for line in (output or "").splitlines():
+    marker = _HOST_MARKER_RE.match(line.strip())
+    if marker:
+      if cvm_ip is not None or lines:
+        blocks.append((cvm_ip, lines))
+      cvm_ip, lines = marker.group("ip"), []
+      continue
+    lines.append(line)
+  if cvm_ip is not None or lines:
+    blocks.append((cvm_ip, lines))
+  return blocks
+
+
+def parse_cli_output(output):
+  """
+  Read the curator_cli answer and the CZMON_* lines from stored CLI output.
+
+  The catalog command stops at the first CVM it can reach over SSH, so the
+  last block holds the curator_cli answer; earlier blocks are CVMs that
+  could not be reached.
+
+  Parameters
+  ----------
+  output : str
+    Output stored by CliProcessor for the curator_full_scan command.
+
+  Returns
+  -------
+  dict
+    ``cvm_ip``, ``stdout`` (curator_cli output without the CZMON_* lines),
+    ``exit_code`` (int or None when no CZMON_EXIT_CODE line was printed),
+    ``cluster_vip`` and ``unreachable_cvms``.
+  """
+  blocks = _split_cvm_blocks(output)
+  parsed = {
+    "cvm_ip": None, "stdout": "", "exit_code": None,
+    "cluster_vip": None, "unreachable_cvms": [],
   }
+  if not blocks:
+    return parsed
+  for cvm_ip, lines in blocks[:-1]:
+    if cvm_ip:
+      parsed["unreachable_cvms"].append(cvm_ip)
+  cvm_ip, lines = blocks[-1]
+  parsed["cvm_ip"] = cvm_ip
+  stdout_lines = []
+  for line in lines:
+    stripped = line.strip()
+    exit_code = _EXIT_CODE_RE.match(stripped)
+    vip = _CLUSTER_VIP_RE.match(stripped)
+    if exit_code:
+      parsed["exit_code"] = int(exit_code.group("code"))
+    elif vip:
+      parsed["cluster_vip"] = vip.group("ip")
+    elif not stripped.startswith("CZMON_"):
+      stdout_lines.append(line)
+  parsed["stdout"] = "\n".join(stdout_lines)
+  return parsed
+
+
+def build_result_from_cli_row(row, clusters=None):
+  """
+  Build the result document for one row of the curator_full_scan table.
+
+  Parameters
+  ----------
+  row : dict
+    Row stored by CliProcessor; uses ``ip``, ``output``, ``cluster_name``
+    and ``created_at``.
+  clusters : dict, optional
+    Cluster virtual IP -> ``{"uuid": ..., "name": ...}`` from the
+    framework's clusters table.
+
+  Returns
+  -------
+  dict
+    The build_result document, plus ``cvm_ip`` and ``unreachable_cvms``.
+  """
+  clusters = clusters or {}
+  ip = row.get("ip")
+  parsed = parse_cli_output(row.get("output"))
+  vip = parsed["cluster_vip"]
+  identity = clusters.get(vip) or clusters.get(ip) or {}
+
+  execution_error = None
+  if parsed["exit_code"] is None:
+    execution_error = "the output has no CZMON_EXIT_CODE line"
+  elif parsed["exit_code"] == SSH_FAILED_EXIT_CODE:
+    execution_error = (
+      f"SSH from the PE to its CVMs failed (last tried {parsed['cvm_ip']})"
+    )
+
+  result = build_result(
+    cluster_ip=ip,
+    exit_code=parsed["exit_code"],
+    stdout=parsed["stdout"],
+    cluster_id=identity.get("uuid"),
+    cluster_name=identity.get("name") or row.get("cluster_name"),
+    cluster_vip=vip,
+    collected_at=row.get("created_at"),
+    execution_error=execution_error,
+  )
+  result["cvm_ip"] = parsed["cvm_ip"]
+  result["unreachable_cvms"] = parsed["unreachable_cvms"]
+  return result
