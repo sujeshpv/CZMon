@@ -6,6 +6,7 @@
   .chart-title { color: #444; font-size: 18px; font-weight: 700; margin-bottom: 24px; text-align: center; }
   .chart-frame { height: 350px; position: relative; }
   .time-options { border-top: 1px solid #ddd; display: flex; gap: 10px; justify-content: center; margin-top: 18px; padding-top: 10px; }
+  .stats-panel[hidden] { display: none !important; }
   .time-btn { background: #f8f9fa; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 9px 18px; }
   .time-btn.active { background: #1769b0; border-color: #1769b0; color: #fff; }
   .stats-status { color: #66717d; padding: 18px 12px; text-align: center; }
@@ -19,8 +20,8 @@
   .point-meta-label { color: #66717d; display: block; font-size: 12px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
   .point-summary { line-height: 1.5; margin: 16px 0; }
   .metric-detail-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 14px 0; }
-  .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; padding: 14px; }
-  .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; }
+  .metric-detail-card { background: #f7f9fb; border: 1px solid #e1e5e9; border-radius: 5px; min-width: 0; overflow: hidden; padding: 14px; }
+  .metric-detail-value { color: #1e2b38; display: block; font-size: 20px; font-weight: 700; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .metric-detail-table { border-collapse: collapse; margin-top: 14px; width: 100%; }
   .metric-detail-table th { background: #f4f7fa; color: #14589b; font-size: 13px; text-align: left; }
   .metric-detail-table th, .metric-detail-table td { border: 1px solid #e1e5e9; padding: 9px 11px; vertical-align: top; }
@@ -53,7 +54,7 @@
   </label>
 </section>
 
-<section class="stats-panel">
+<section class="stats-panel" id="statsChartPanel">
   <div class="chart-title">{{ selected_stat.name }}</div>
   <div class="chart-frame"><canvas id="statsChart"></canvas></div>
   <div class="stats-status" id="statsStatus">Loading data…</div>
@@ -140,7 +141,8 @@
     return scales;
   }
 
-  const chart = new Chart(document.getElementById("statsChart"), {
+  const statsChartCanvas = document.getElementById("statsChart");
+  const chart = statsChartCanvas ? new Chart(statsChartCanvas, {
     type: config.chart_type || "line",
     data: { labels: [], datasets: datasetConfig.map((item) => ({
         label: item.label,
@@ -188,7 +190,7 @@
         if (selected.length) showPointDetails(pointRecords[selected[0].index]);
       }
     }
-  });
+  }) : null;
 
   function replaceOptions(select, placeholder, options) {
     select.replaceChildren(new Option(placeholder, ""));
@@ -212,7 +214,10 @@
     items.forEach(([label, value]) => {
       const card = createElement("div", "metric-detail-card");
       card.appendChild(createElement("span", "point-meta-label", label));
-      card.appendChild(createElement("span", "metric-detail-value", value));
+      const text = value === undefined || value === null ? "" : String(value);
+      const valueEl = createElement("span", "metric-detail-value", text);
+      if (text) valueEl.title = text;
+      card.appendChild(valueEl);
       grid.appendChild(card);
     });
     pointMetricDetails.appendChild(grid);
@@ -294,26 +299,6 @@
     pre.textContent = logOutput;
     logCard.appendChild(pre);
     pointMetricDetails.appendChild(logCard);
-  }
-
-  function renderSshConnectionDetails(details) {
-    let parsedData = details;
-    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
-
-    addDetailCards([
-      ["Status", parsedData?.status || "Unknown"],
-      ["Highest per CVM", Number(parsedData?.highest_established || 0)],
-      ["Cluster total", Number(parsedData?.total_established || 0)]
-    ]);
-    if (parsedData?.error) {
-      addDetailCards([["Error", parsedData.error]]);
-    }
-
-    const perCvm = parsedData?.per_cvm || {};
-    const cvmRows = Object.entries(perCvm)
-      .sort((a, b) => Number(b[1]) - Number(a[1]))
-      .map(([ip, count]) => [ip, Number(count)]);
-    addDetailTable(["CVM", "ESTABLISHED SSH"], cvmRows);
   }
 
   function renderAhvDetails(details) {
@@ -515,10 +500,55 @@
     addDetailTable(["Property", "Value"], rows);
   }
 
+  function renderLsofDetails(details) {
+    let parsedDetails = details || {};
+    if (typeof parsedDetails === "string") {
+      try { parsedDetails = JSON.parse(parsedDetails); } catch (e) { parsedDetails = {}; }
+    }
+
+    const hostResults = Array.isArray(parsedDetails.host_results)
+      ? parsedDetails.host_results
+      : [];
+
+    addDetailCards([
+      ["Collection Status", parsedDetails.status || "UNKNOWN"],
+      ["Maximum lsof Rows", parsedDetails.lsof_count ?? "N/A"],
+      ["CVMs Checked", parsedDetails.host_count ?? hostResults.length],
+      ["Successful CVMs", parsedDetails.successful_hosts ?? "N/A"],
+      ["Failed CVMs", parsedDetails.failed_hosts ?? "N/A"]
+    ]);
+
+    if (parsedDetails.command) {
+      addDetailTable(["Command", "Value"], [["Collection command", parsedDetails.command]]);
+    }
+
+    const rows = hostResults.map((host) => [
+      host?.host || "Unknown",
+      host?.lsof_count ?? "N/A",
+      host?.status || "UNKNOWN",
+      host?.error || ""
+    ]);
+
+    if (rows.length) {
+      addDetailTable(["CVM", "lsof Rows", "Status", "Error"], rows);
+    } else {
+      const fallbackRows = Object.entries(parsedDetails)
+        .filter(([key]) => key !== "host_results")
+        .map(([key, value]) => [
+          key.replaceAll("_", " "),
+          value && typeof value === "object" ? "See collected metric summary" : value
+        ]);
+      addDetailTable(["Property", "Value"], fallbackRows);
+    }
+  }
+
   function showPointDetails(item) {
     if (!item) return;
     const date = new Date(item.timestamp);
-    const details = item.details ?? item.data ?? {};
+    let details = item.details ?? item.data ?? {};
+    if (typeof details === "string") {
+      try { details = JSON.parse(details); } catch (e) { details = {}; }
+    }
     pointDetailsTarget.textContent = item.ip || "Unknown";
     pointDetailsTimestamp.textContent = date.toLocaleString();
     pointDetailsSummary.textContent = item.summary || "Collected metric details";
@@ -532,7 +562,7 @@
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
-    else if (config.parser === "ssh_connections") renderSshConnectionDetails(details);
+    else if (config.parser === "lsof_counts") renderLsofDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -545,9 +575,11 @@
   }
 
   async function fetchStatsData() {
-    status.hidden = false;
-    status.classList.remove("error");
-    status.textContent = "Loading data…";
+    if (status) {
+      status.hidden = false;
+      status.classList.remove("error");
+      status.textContent = "Loading data…";
+    }
 
     const target = targetFilter.value;
     const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
@@ -566,6 +598,8 @@
         seen.add(key);
         return true;
       });
+      pointRecords = series;
+
       const labels = [];
       closePointDetails();
 
@@ -607,7 +641,10 @@
             return null;
           }
 
-          const sourceData = item.values || item.data || {};
+          let sourceData = item.values || item.data || {};
+          if (typeof sourceData === "string") {
+            try { sourceData = JSON.parse(sourceData); } catch (e) { sourceData = {}; }
+          }
           return Object.prototype.hasOwnProperty.call(sourceData, key)
             ? sourceData[key]
             : null;
@@ -629,9 +666,11 @@
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
     } catch (error) {
-      status.hidden = false;
-      status.classList.add("error");
-      status.textContent = error.message;
+      if (status) {
+        status.hidden = false;
+        status.classList.add("error");
+        status.textContent = error.message;
+      }
     }
   }
 
@@ -695,7 +734,9 @@
     refreshTargets();
     fetchStatsData();
   });
-  targetFilter.addEventListener("change", fetchStatsData);
+  targetFilter.addEventListener("change", () => {
+    fetchStatsData();
+  });
   pointDetailsClear.addEventListener("click", closePointDetails);
 
   document.querySelectorAll(".time-btn").forEach((button) => {

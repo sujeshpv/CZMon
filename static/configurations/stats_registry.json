@@ -8,10 +8,19 @@
     "chart_type": "line",
     "y_axis": "Usage %",
     "is_percentage": true,
-    "endpoint_types": ["PE"],
-    "target_labels": {"PE": "Cluster"},
+    "endpoint_types": [
+      "PE"
+    ],
+    "target_labels": {
+      "PE": "Cluster"
+    },
     "datasets": [
-      {"key": "usage", "label": "Partition Usage", "color": "#1769b0", "axis": "y"}
+      {
+        "key": "usage",
+        "label": "Partition Usage",
+        "color": "#1769b0",
+        "axis": "y"
+      }
     ]
   },
   "pgw_status": {
@@ -24,10 +33,22 @@
     "y_axis": "PGW Status",
     "is_percentage": false,
     "status_axis": true,
-    "endpoint_types": ["PC", "PE"],
-    "target_labels": {"PC": "PC", "PE": "PE"},
+    "endpoint_types": [
+      "PC",
+      "PE"
+    ],
+    "target_labels": {
+      "PC": "PC",
+      "PE": "PE"
+    },
     "datasets": [
-      {"key": "status", "label": "PGW Status", "color": "#1769b0", "axis": "y", "stepped": true}
+      {
+        "key": "status",
+        "label": "PGW Status",
+        "color": "#1769b0",
+        "axis": "y",
+        "stepped": true
+      }
     ]
   },
   "vm_power_states": {
@@ -39,12 +60,31 @@
     "chart_type": "line",
     "y_axis": "VMs",
     "is_percentage": false,
-    "endpoint_types": ["PE"],
-    "target_labels": {"PE": "Cluster"},
+    "endpoint_types": [
+      "PE"
+    ],
+    "target_labels": {
+      "PE": "Cluster"
+    },
     "datasets": [
-      {"key": "powered_on", "label": "Powered On", "color": "#218838", "axis": "y"},
-      {"key": "powered_off", "label": "Powered Off", "color": "#c82333", "axis": "y"},
-      {"key": "affinity", "label": "Affinity VMs", "color": "#6f42c1", "axis": "y"}
+      {
+        "key": "powered_on",
+        "label": "Powered On",
+        "color": "#218838",
+        "axis": "y"
+      },
+      {
+        "key": "powered_off",
+        "label": "Powered Off",
+        "color": "#c82333",
+        "axis": "y"
+      },
+      {
+        "key": "affinity",
+        "label": "Affinity VMs",
+        "color": "#6f42c1",
+        "axis": "y"
+      }
     ]
   },
   "task_monitor": {
@@ -57,11 +97,25 @@
     "y_axis": "Tasks",
     "is_percentage": false,
     "hide_empty_datasets": true,
-    "endpoint_types": ["PC"],
-    "target_labels": {"PC": "PC"},
+    "endpoint_types": [
+      "PC"
+    ],
+    "target_labels": {
+      "PC": "PC"
+    },
     "datasets": [
-      {"key": "pending", "label": "Pending", "color": "#fd7e14", "axis": "y"},
-      {"key": "failed", "label": "Failed", "color": "#c82333", "axis": "y"}
+      {
+        "key": "pending",
+        "label": "Pending",
+        "color": "#fd7e14",
+        "axis": "y"
+      },
+      {
+        "key": "failed",
+        "label": "Failed",
+        "color": "#c82333",
+        "axis": "y"
+      }
     ]
   },
   "underutilized_cluster": {
@@ -73,15 +127,35 @@
     "chart_type": "line",
     "y_axis": "Usage %",
     "is_percentage": true,
-    "endpoint_types": ["PE"],
-    "target_labels": {"PE": "Cluster"},
+    "endpoint_types": [
+      "PC",
+      "PE"
+    ],
+    "target_labels": {
+      "PC": "Cluster",
+      "PE": "Cluster"
+    },
     "datasets": [
-      {"key": "cpu", "label": "CPU %", "color": "#1769b0", "axis": "y"},
-      {"key": "memory", "label": "Memory %", "color": "#218838", "axis": "y"},
-      {"key": "iops", "label": "IOPS", "color": "#fd7e14", "axis": "y1"}
+      {
+        "key": "cpu",
+        "label": "CPU %",
+        "color": "#1769b0",
+        "axis": "y"
+      },
+      {
+        "key": "memory",
+        "label": "Memory %",
+        "color": "#218838",
+        "axis": "y"
+      },
+      {
+        "key": "iops",
+        "label": "IOPS",
+        "color": "#fd7e14",
+        "axis": "y1"
+      }
     ]
   },
-
   "recovery_point_usage": {
     "name": "Recovery Point Usage",
     "table_name": "snapshot_usage_tracker",
@@ -91,13 +165,21 @@
     "chart_type": "line",
     "y_axis": "Usage (%)",
     "is_percentage": true,
-    "endpoint_types": ["PE"],
-    "target_labels": {"PE": "Cluster"},
+    "endpoint_types": [
+      "PE"
+    ],
+    "target_labels": {
+      "PE": "Cluster"
+    },
     "datasets": [
-      {"key": "recovery_point_usage", "label": "Snapshot Usage", "color": "#1769b0", "axis": "y"}
+      {
+        "key": "recovery_point_usage",
+        "label": "Snapshot Usage",
+        "color": "#1769b0",
+        "axis": "y"
+      }
     ]
   },
-
   "expired_snapshots": {
     "name": "Expired Snapshots",
     "table_name": "expired_snapshots",
@@ -107,13 +189,21 @@
     "chart_type": "line",
     "y_axis": "Total Expired",
     "is_percentage": false,
-    "endpoint_types": ["PC"],
-    "target_labels": {"PC": "Prism Central"},
+    "endpoint_types": [
+      "PC"
+    ],
+    "target_labels": {
+      "PC": "Prism Central"
+    },
     "datasets": [
-      {"key": "total", "label": "Expired Snapshots", "color": "#fd7e14", "axis": "y"}
+      {
+        "key": "total",
+        "label": "Expired Snapshots",
+        "color": "#fd7e14",
+        "axis": "y"
+      }
     ]
   },
-
   "node_check_crash": {
     "name": "SIGSEGV Crash Audit",
     "table_name": "node_check_crash",
@@ -124,26 +214,44 @@
     "y_axis": "Status",
     "is_percentage": false,
     "status_axis": true,
-    "endpoint_types": ["PE"],
-    "target_labels": {"PE": "Cluster"},
+    "endpoint_types": [
+      "PE"
+    ],
+    "target_labels": {
+      "PE": "Cluster"
+    },
     "datasets": [
-      {"key": "status", "label": "No Crashes", "color": "#dc3545", "axis": "y", "stepped": true}
+      {
+        "key": "status",
+        "label": "No Crashes",
+        "color": "#dc3545",
+        "axis": "y",
+        "stepped": true
+      }
     ]
   },
-
-  "ssh_connections": {
-    "name": "SSH Connections",
-    "table_name": "check_ssh_connections",
-    "summary": "ESTABLISHED SSH (port 22) connection counts across CVMs. Healthy is under 10 per CVM.",
+  "lsof_counts": {
+    "name": "Open Files Count",
+    "table_name": "check_lsof_counts",
+    "summary": "Maximum sudo lsof row count observed on a CVM in each PE cluster.",
     "page": "stats_pages/time_series.html",
-    "parser": "ssh_connections",
+    "parser": "lsof_counts",
     "chart_type": "line",
-    "y_axis": "Connections",
+    "y_axis": "lsof Rows",
     "is_percentage": false,
-    "endpoint_types": ["PE"],
-    "target_labels": {"PE": "Cluster"},
+    "endpoint_types": [
+      "PE"
+    ],
+    "target_labels": {
+      "PE": "Cluster"
+    },
     "datasets": [
-      {"key": "highest_established", "label": "Highest per CVM", "color": "#c82333", "axis": "y"}
+      {
+        "key": "lsof_count",
+        "label": "Maximum lsof Rows",
+        "color": "#c82333",
+        "axis": "y"
+      }
     ]
   }
 }
