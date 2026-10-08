@@ -42,5 +42,12 @@
   "snapshot_usage_tracker": {
     "description": "Tracks Recovery Point storage usage percentages",
     "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/snapshot_usage_tracker.py"]
+  },
+  "check_lsof_counts": {
+    "description": "Collects sudo lsof counts from all CVMs in each PE cluster",
+    "command": [
+      "/home/nutanix/CZMon/venv/bin/python3",
+      "/home/nutanix/CZMon/collectors/scripts/check_lsof_counts.py"
+    ]
   }
 }

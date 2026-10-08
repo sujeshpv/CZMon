@@ -486,6 +486,50 @@
     }
   }
 
+  function renderLsofDetails(details) {
+  let parsedData = details;
+
+  if (typeof parsedData === "string") {
+    try {
+      parsedData = JSON.parse(parsedData);
+    } catch (error) {
+      parsedData = {};
+    }
+  }
+
+  parsedData =
+    parsedData && typeof parsedData === "object" ? parsedData : {};
+
+  const hostResults = Array.isArray(parsedData.host_results)
+    ? parsedData.host_results
+    : [];
+
+  addDetailCards([
+    ["Maximum lsof Rows", parsedData.lsof_count ?? "N/A"],
+    ["Status", parsedData.status || "UNKNOWN"],
+    ["CVMs Checked", parsedData.host_count ?? hostResults.length],
+    ["Successful CVMs", parsedData.successful_hosts ?? 0],
+    ["Failed CVMs", parsedData.failed_hosts ?? 0],
+  ]);
+
+  const rows = hostResults.map((result) => [
+    result.host || "Unknown",
+    result.lsof_count ?? "N/A",
+    result.status || "UNKNOWN",
+    result.error || "",
+  ]);
+
+  addDetailTable(["CVM", "lsof Rows", "Status", "Error"], rows);
+
+  if (parsedData.command) {
+    addDetailTable(
+      ["Property", "Value"],
+      [["Command", parsedData.command]]
+    );
+  }
+}
+
+
   function renderPgwDetails(details) {
     addDetailCards([
       ["PGW Status", details?.is_online ? "ON" : "OFF"]
@@ -533,6 +577,7 @@
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
     else if (config.parser === "ssh_connections") renderSshConnectionDetails(details);
+    else if (config.parser === "lsof_counts") renderLsofDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
