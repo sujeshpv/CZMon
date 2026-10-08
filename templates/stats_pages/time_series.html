@@ -28,6 +28,8 @@
   .detail-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
   .detail-selectors .filter-select { min-width: 220px; }
   .detail-help { color: #66717d; margin: 14px 0 0; }
+  .status-ok { color: #218838; font-weight: 700; }
+  .status-error { color: #c82333; font-weight: 700; }
   @media (max-width: 640px) { .point-meta { grid-template-columns: 1fr; } }
 </style>
 
@@ -296,6 +298,40 @@
     pointMetricDetails.appendChild(logCard);
   }
 
+  function renderPcRemoteConnectionDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch (e) {} }
+
+    const connections = Array.isArray(parsedData?.connections) ? parsedData.connections : [];
+    if (parsedData?.error && !connections.length) {
+      addDetailCards([["Status", "ERROR"]]);
+      pointMetricDetails.appendChild(createElement("p", "detail-help", parsedData.error));
+      return;
+    }
+    if (!connections.length) {
+      pointMetricDetails.appendChild(
+        createElement("p", "detail-help", "No remote connections were collected for this PC.")
+      );
+      return;
+    }
+
+    const table = createElement("table", "metric-detail-table");
+    const headRow = table.createTHead().insertRow();
+    ["Remote Connection", "Status"].forEach((header) => {
+      headRow.appendChild(createElement("th", "", header));
+    });
+    const body = table.createTBody();
+    connections.forEach((item) => {
+      const status = String(item.status || item.health_status || "").toUpperCase() === "OK"
+        ? "OK"
+        : "ERROR";
+      const row = body.insertRow();
+      row.appendChild(createElement("td", "", item.name || item.uuid || "Unknown"));
+      row.appendChild(createElement("td", status === "OK" ? "status-ok" : "status-error", status));
+    });
+    pointMetricDetails.appendChild(table);
+  }
+
   function renderSshConnectionDetails(details) {
     let parsedData = details;
     if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
@@ -515,7 +551,7 @@
     addDetailTable(["Property", "Value"], rows);
   }
 
-  function showPointDetails(item) {
+  function showPointDetails(item, scroll = true) {
     if (!item) return;
     const date = new Date(item.timestamp);
     const details = item.details ?? item.data ?? {};
@@ -533,10 +569,13 @@
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
     else if (config.parser === "ssh_connections") renderSshConnectionDetails(details);
+    else if (config.parser === "pc_remote_connections") renderPcRemoteConnectionDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
-    pointDetailsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (scroll) {
+      pointDetailsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   function closePointDetails() {
@@ -628,6 +667,9 @@
 
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
+      if (config.parser === "pc_remote_connections" && target && series.length) {
+        showPointDetails(series[series.length - 1], false);
+      }
     } catch (error) {
       status.hidden = false;
       status.classList.add("error");

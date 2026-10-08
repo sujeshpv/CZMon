@@ -1630,6 +1630,33 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "pc_remote_connections":
+    raw_connections = payload.get("connections")
+    connections = []
+    ok_count = 0
+    error_count = 0
+    if isinstance(raw_connections, list):
+      for item in raw_connections:
+        if not isinstance(item, dict):
+          continue
+        status = "OK" if str(item.get("health_status") or "").upper() == "OK" else "ERROR"
+        if status == "OK":
+          ok_count += 1
+        else:
+          error_count += 1
+        connections.append({
+          "name": str(item.get("name") or item.get("uuid") or "Unknown"),
+          "status": status,
+        })
+    total = ok_count + error_count
+    return {
+      "values": {"ok": ok_count, "error": error_count},
+      "summary": (
+        f"{ok_count} OK, {error_count} ERROR across {total} remote connection(s)."
+      ),
+      "details": {"connections": connections},
+    }
+
   value = len(payload)
   return {
     "values": {"value": value},
