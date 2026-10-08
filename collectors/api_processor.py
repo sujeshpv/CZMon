@@ -181,6 +181,7 @@ class ApiProcessor:
               if kwargs else crud_method(api_endpoint)
             )
             values = self.extract_values(response, value_paths)
+            values["ip_address"] = ip
             values["output"] = json.dumps(response)
             self.db_worker.ensure_schema(table_name, values)
             self.db_worker.insert_row(table_name, values)

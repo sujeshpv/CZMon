@@ -13,5 +13,22 @@
         "path": "usage_stats.\"storage.snapshot_reclaimable_bytes\""
       }
     ]
+  },
+  "controller_iops": {
+    "description": "Cluster-wide controller IOPS on PE",
+    "entity_type": "cluster",
+    "endpoint_type": "PE",
+    "api_endpoint": "/PrismGateway/services/rest/v1/cluster/stats",
+    "http_method": "GET",
+    "params": {
+      "metrics": "controller_num_iops",
+      "intervalInSecs": 30
+    },
+    "value_paths": [
+      {
+        "alias": "controller_iops",
+        "path": "statsSpecificResponses[0].values[0]"
+      }
+    ]
   }
 }

@@ -28,6 +28,13 @@
   .detail-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
   .detail-selectors .filter-select { min-width: 220px; }
   .detail-help { color: #66717d; margin: 14px 0 0; }
+  .latest-metric { align-items: baseline; display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: center; margin: 0 0 18px; }
+  .latest-metric[hidden] { display: none; }
+  .latest-metric-label { color: #66717d; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+  .latest-metric-value { color: #14589b; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
+  .latest-metric-meta { color: #66717d; font-size: 13px; }
+  .chart-frame[hidden] { display: none; }
+  .time-options[hidden] { display: none; }
   @media (max-width: 640px) { .point-meta { grid-template-columns: 1fr; } }
 </style>
 
@@ -55,9 +62,16 @@
 
 <section class="stats-panel">
   <div class="chart-title">{{ selected_stat.name }}</div>
-  <div class="chart-frame"><canvas id="statsChart"></canvas></div>
+  <div class="latest-metric" id="latestMetric" hidden>
+    <div>
+      <div class="latest-metric-label">Latest</div>
+      <div class="latest-metric-value" id="latestMetricValue">—</div>
+    </div>
+    <div class="latest-metric-meta" id="latestMetricMeta"></div>
+  </div>
+  <div class="chart-frame" id="chartFrame"><canvas id="statsChart"></canvas></div>
   <div class="stats-status" id="statsStatus">Loading data…</div>
-  <div class="time-options">
+  <div class="time-options" id="timeOptions">
     <button class="time-btn" data-range="12h" type="button">12 Hours</button>
     <button class="time-btn" data-range="24h" type="button">24 Hours</button>
     <button class="time-btn" data-range="7d" type="button">7 Days</button>
@@ -104,11 +118,23 @@
   const pointDetailsTimestamp = document.getElementById("pointDetailsTimestamp");
   const pointDetailsSummary = document.getElementById("pointDetailsSummary");
   const pointMetricDetails = document.getElementById("pointMetricDetails");
+  const latestMetric = document.getElementById("latestMetric");
+  const latestMetricValue = document.getElementById("latestMetricValue");
+  const latestMetricMeta = document.getElementById("latestMetricMeta");
+  const chartFrame = document.getElementById("chartFrame");
+  const timeOptions = document.getElementById("timeOptions");
   const datasetConfig = config.datasets || [{
     key: "value", label: config.name, color: "#1769b0", axis: "y"
   }];
+  const isBarChart = (config.chart_type || "line") === "bar";
+  const requireTarget = Boolean(config.require_target);
   let currentRange = "90d";
   let pointRecords = [];
+
+  function setChartVisible(visible) {
+    chartFrame.hidden = !visible;
+    timeOptions.hidden = !visible;
+  }
 
   function chartScales() {
     const scales = {
@@ -140,17 +166,43 @@
     return scales;
   }
 
+  function updateLatestMetric(series) {
+    if (config.parser !== "controller_iops") {
+      latestMetric.hidden = true;
+      return;
+    }
+    if (!series.length) {
+      latestMetric.hidden = true;
+      latestMetricValue.textContent = "—";
+      latestMetricMeta.textContent = "";
+      return;
+    }
+    const latest = series[series.length - 1];
+    const source = latest.values || latest.data || {};
+    const iops = Number(source.controller_iops);
+    latestMetricValue.textContent = Number.isFinite(iops)
+      ? iops.toLocaleString()
+      : "—";
+    const when = latest.timestamp
+      ? new Date(latest.timestamp).toLocaleString()
+      : "";
+    latestMetricMeta.textContent = [latest.ip, when].filter(Boolean).join(" · ");
+    latestMetric.hidden = false;
+  }
+
   const chart = new Chart(document.getElementById("statsChart"), {
     type: config.chart_type || "line",
     data: { labels: [], datasets: datasetConfig.map((item) => ({
         label: item.label,
         data: [],
         borderColor: item.color,
-        backgroundColor: item.color,
-        borderWidth: 3,
+        backgroundColor: isBarChart ? `${item.color}cc` : item.color,
+        borderWidth: isBarChart ? 1 : 3,
+        borderRadius: isBarChart ? 4 : 0,
+        maxBarThickness: isBarChart ? 48 : undefined,
         fill: false,
-        pointRadius: 4,
-        pointHoverRadius: 7,
+        pointRadius: isBarChart ? 0 : 4,
+        pointHoverRadius: isBarChart ? 0 : 7,
         tension: .15,
         stepped: Boolean(item.stepped),
         yAxisID: item.axis || "y",
@@ -314,6 +366,15 @@
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .map(([ip, count]) => [ip, Number(count)]);
     addDetailTable(["CVM", "ESTABLISHED SSH"], cvmRows);
+  }
+
+  function renderControllerIopsDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+
+    addDetailCards([
+      ["Controller IOPS", Number(parsedData?.controller_iops || 0)]
+    ]);
   }
 
   function renderAhvDetails(details) {
@@ -533,6 +594,7 @@
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
     else if (config.parser === "ssh_connections") renderSshConnectionDetails(details);
+    else if (config.parser === "controller_iops") renderControllerIopsDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -544,12 +606,30 @@
     pointMetricDetails.replaceChildren();
   }
 
+  function clearChart() {
+    pointRecords = [];
+    chart.data.labels = [];
+    chart.data.datasets.forEach((dataset) => { dataset.data = []; });
+    chart.update();
+    latestMetric.hidden = true;
+    closePointDetails();
+  }
+
   async function fetchStatsData() {
     status.hidden = false;
     status.classList.remove("error");
-    status.textContent = "Loading data…";
 
     const target = targetFilter.value;
+    if (requireTarget && !target) {
+      clearChart();
+      setChartVisible(false);
+      status.textContent = `Select a ${targetLabel().toLowerCase()} to view ${config.name || "this metric"}.`;
+      return;
+    }
+
+    setChartVisible(true);
+    status.textContent = "Loading data…";
+
     const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
     if (target) params.set("target", target);
     if (setupTypeFilter.value) params.set("endpoint_type", setupTypeFilter.value);
@@ -625,10 +705,12 @@
         );
       });
       chart.update();
+      updateLatestMetric(series);
 
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
     } catch (error) {
+      latestMetric.hidden = true;
       status.hidden = false;
       status.classList.add("error");
       status.textContent = error.message;

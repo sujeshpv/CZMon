@@ -145,5 +145,22 @@
     "datasets": [
       {"key": "highest_established", "label": "Highest per CVM", "color": "#c82333", "axis": "y"}
     ]
+  },
+
+  "controller_iops": {
+    "name": "Controller IOPS",
+    "table_name": "controller_iops",
+    "summary": "Cluster-wide controller IOPS collected from PE Prism Gateway stats.",
+    "page": "stats_pages/time_series.html",
+    "parser": "controller_iops",
+    "chart_type": "bar",
+    "y_axis": "IOPS",
+    "is_percentage": false,
+    "require_target": true,
+    "endpoint_types": ["PE"],
+    "target_labels": {"PE": "Cluster"},
+    "datasets": [
+      {"key": "controller_iops", "label": "Controller IOPS", "color": "#1769b0", "axis": "y"}
+    ]
   }
 }
