@@ -148,6 +148,22 @@
       {"key": "ngt_enabled", "label": "NGT Enabled", "color": "#1769b0", "axis": "y"},
       {"key": "ngt_reachable", "label": "NGT Reachable", "color": "#6f42c1", "axis": "y"}
     ]
+  },
+
+  "objects_lite_health": {
+    "name": "Objects Lite Health",
+    "table_name": "check_objects_lite_health",
+    "summary": "Objects Lite Health check on Prism Central",
+    "page": "stats_pages/time_series.html",
+    "parser": "objects_lite_health",
+    "chart_type": "line",
+    "y_axis": "Status",
+    "is_percentage": false,
+    "endpoint_types": ["PC"],
+    "target_labels": {"PC": "PC"},
+    "datasets": [
+      {"key": "status", "label": "Healthy", "color": "#218838", "axis": "y"}
+    ]
   }
 
 

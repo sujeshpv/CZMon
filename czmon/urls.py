@@ -32,5 +32,10 @@ urlpatterns = [
 
     path("stats/", core_views.stats_view, name="stats"),
     path("api/stats-data/", core_views.stats_data_api, name="stats_data_api"),
+    path(
+      "api/stats-objects-lite-check/",
+      core_views.objects_lite_health_check_api,
+      name="objects_lite_health_check_api",
+    ),
 ]
 

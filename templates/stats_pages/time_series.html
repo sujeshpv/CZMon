@@ -87,9 +87,21 @@
     </select>
   </label>
   {% endif %}
+  {% if selected_stat.parser == "objects_lite_health" %}
+  <label class="filter-item" for="objectsLiteStateFilter">
+    <span class="filter-label">Pod State</span>
+    <select class="filter-select ngt-filter-select" id="objectsLiteStateFilter" disabled>
+      <option value="">Select a PC first</option>
+      <option value="Pending">Pending</option>
+      <option value="Running">Running</option>
+      <option value="Succeeded">Succeeded</option>
+      <option value="Failed">Failed</option>
+    </select>
+  </label>
+  {% endif %}
 </section>
 
-{% if selected_stat.parser != "ngt_status" %}
+{% if selected_stat.parser != "ngt_status" and selected_stat.parser != "objects_lite_health" %}
 <section class="stats-panel" id="statsChartPanel">
   <div class="chart-title">{{ selected_stat.name }}</div>
   <div class="chart-frame"><canvas id="statsChart"></canvas></div>
@@ -143,6 +155,7 @@
   const ngtStateFilter = document.getElementById("ngtStateFilter");
   const ngtEnabledFilter = document.getElementById("ngtEnabledFilter");
   const ngtReachableFilter = document.getElementById("ngtReachableFilter");
+  const objectsLiteStateFilter = document.getElementById("objectsLiteStateFilter");
   const pointDetailsPanel = document.getElementById("pointDetailsPanel");
   const pointDetailsClear = document.getElementById("pointDetailsClear");
   const pointDetailsTarget = document.getElementById("pointDetailsTarget");
@@ -161,6 +174,104 @@
 
   function isNgtStat() {
     return config.parser === "ngt_status";
+  }
+
+  function isObjectsLiteStat() {
+    return config.parser === "objects_lite_health";
+  }
+
+  let objectsLiteCheckToken = 0;
+
+  function objectsLitePhaseFromDetails(details) {
+    const pods = Array.isArray(details?.pods) ? details.pods : [];
+    const primary = pods.find((pod) => pod.name === "objects-lite-0") || pods[0] || {};
+    const phase = String(
+      details?.phase || primary.phase || primary.status || ""
+    );
+    return { phase, pods, primary };
+  }
+
+  function setObjectsLiteStatePlaceholder(text) {
+    if (!objectsLiteStateFilter) return;
+    objectsLiteStateFilter.disabled = true;
+    const first = objectsLiteStateFilter.options[0];
+    if (first && first.value === "") first.textContent = text;
+    objectsLiteStateFilter.value = "";
+  }
+
+  function resetObjectsLiteStateFilter() {
+    if (!isObjectsLiteStat() || !objectsLiteStateFilter) return;
+    setObjectsLiteStatePlaceholder("Select a PC first");
+  }
+
+  function syncObjectsLiteStateFilter(details) {
+    if (!isObjectsLiteStat() || !objectsLiteStateFilter) return;
+    objectsLiteStateFilter.disabled = true;
+    const { phase } = objectsLitePhaseFromDetails(details);
+    if (["Pending", "Running", "Succeeded", "Failed"].includes(phase)) {
+      setObjectsLiteStatePlaceholder("Select a PC first");
+      objectsLiteStateFilter.value = phase;
+      return;
+    }
+    setObjectsLiteStatePlaceholder(phase && phase !== "Unknown" ? phase : "Unknown");
+  }
+
+  async function checkObjectsLiteHealth() {
+    if (!isObjectsLiteStat()) return;
+    const target = targetFilter.value;
+    if (!target) {
+      resetObjectsLiteStateFilter();
+      closePointDetails();
+      return;
+    }
+    const token = ++objectsLiteCheckToken;
+    const pcName = targetNames[target] || target;
+    setObjectsLiteStatePlaceholder("Checking…");
+    showPointDetails({
+      ip: target,
+      timestamp: new Date().toISOString(),
+      summary: "Checking Objects Lite health on the selected PC…",
+      details: { pc_name: pcName, checking: true, phase: "Unknown", pods: [] }
+    });
+    try {
+      const params = new URLSearchParams({
+        target,
+        endpoint_type: "PC"
+      });
+      const response = await fetch(
+        "{% url 'objects_lite_health_check_api' %}?" + params.toString()
+      );
+      const payload = await response.json();
+      if (token !== objectsLiteCheckToken) return;
+      if (!response.ok) {
+        throw new Error(payload.error || "Objects Lite health check failed.");
+      }
+      const item = {
+        timestamp: payload.timestamp || new Date().toISOString(),
+        ip: payload.ip || target,
+        summary: payload.summary,
+        details: payload.details || payload.data || {},
+        data: payload.data,
+        values: payload.values
+      };
+      pointRecords = [item];
+      syncObjectsLiteStateFilter(parsePointDetails(item));
+      showPointDetails(item);
+    } catch (error) {
+      if (token !== objectsLiteCheckToken) return;
+      setObjectsLiteStatePlaceholder("Unknown");
+      showPointDetails({
+        ip: target,
+        timestamp: new Date().toISOString(),
+        summary: error.message,
+        details: {
+          pc_name: pcName,
+          error: error.message,
+          phase: "Unknown",
+          pods: []
+        }
+      });
+    }
   }
 
   function showLatestNgtDetails() {
@@ -621,10 +732,63 @@
     }
   }
 
+  function renderObjectsLiteDetails(details) {
+    if (details?.checking) {
+      addDetailCards([
+        ["PC", details?.pc_name || "Unknown"],
+        ["Pod State", "Checking…"],
+        ["Status", "Running Objects Lite health check"]
+      ]);
+      return;
+    }
+    syncObjectsLiteStateFilter(details);
+    const { phase, pods } = objectsLitePhaseFromDetails(details);
+    const podList = pods.length ? pods : (phase && phase !== "Unknown" ? [{
+      name: details?.pod_name || "objects-lite-0",
+      namespace: details?.namespace || "pc-platform-nci",
+      phase,
+      status: phase,
+      ready: details?.ready || "",
+      restarts: details?.restarts || "",
+      age: details?.running_for || "",
+      running_for: details?.running_for || ""
+    }] : []);
+
+    if (details?.error) {
+      addDetailCards([["Error", details.error]]);
+    }
+    if (!podList.length) {
+      addDetailCards([
+        ["PC", details?.pc_name || "Unknown"],
+        ["Pod", "Not found for the selected PC"],
+        ["Pod State", phase || "Unknown"],
+        ["Running For", details?.running_for || ""],
+        ["Healthy", "No"]
+      ]);
+      return;
+    }
+
+    podList.forEach((pod) => {
+      const podState = String(pod.phase || pod.status || phase || "Unknown");
+      addDetailCards([
+        ["PC", details?.pc_name || "Unknown"],
+        ["Pod", pod.name || details?.pod_name || "objects-lite-0"],
+        ["Namespace", pod.namespace || details?.namespace || "pc-platform-nci"],
+        ["Pod State", podState],
+        ["Running For", pod.age || pod.running_for || details?.running_for || "Unknown"],
+        ["Ready", pod.ready || details?.ready || ""],
+        ["Restarts", pod.restarts || details?.restarts || ""],
+        ["Healthy", podState === "Running" ? "Yes" : "No"]
+      ]);
+    });
+  }
+
   function showPointDetails(item) {
     if (!item) return;
     const date = new Date(item.timestamp);
-    const details = item.details ?? item.data ?? {};
+    const details = isObjectsLiteStat()
+      ? parsePointDetails(item)
+      : (item.details ?? item.data ?? {});
     pointDetailsTarget.textContent = item.ip || "Unknown";
     pointDetailsTimestamp.textContent = date.toLocaleString();
     pointDetailsSummary.textContent = item.summary || "Collected metric details";
@@ -648,6 +812,7 @@
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
     else if (config.parser === "ngt_status") renderNgtDetails(details);
+    else if (config.parser === "objects_lite_health") renderObjectsLiteDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -839,6 +1004,10 @@
   }
 
   async function fetchStatsData() {
+    if (isObjectsLiteStat()) {
+      await checkObjectsLiteHealth();
+      return;
+    }
     if (status) {
       status.hidden = false;
       status.classList.remove("error");
@@ -983,6 +1152,7 @@
     targetFilterLabel.textContent = label;
     replaceOptions(targetFilter, `Select ${label}`, options);
     if (isNgtStat()) resetVmFilter();
+    if (isObjectsLiteStat()) resetObjectsLiteStateFilter();
   }
 
   const supportedTypes = config.endpoint_types || ["PC", "PE"];
@@ -1034,12 +1204,19 @@
     if (ngtEnabledFilter) ngtEnabledFilter.addEventListener("change", applyNgtFilters);
     if (ngtReachableFilter) ngtReachableFilter.addEventListener("change", applyNgtFilters);
   }
+  if (isObjectsLiteStat() && objectsLiteStateFilter) {
+    objectsLiteStateFilter.disabled = true;
+  }
   pointDetailsClear.addEventListener("click", () => {
     if (isNgtStat()) {
       selectedVmUuid = "";
       if (vmSearch) vmSearch.value = "";
       refreshVmOptions();
       showLatestNgtDetails();
+      return;
+    }
+    if (isObjectsLiteStat()) {
+      checkObjectsLiteHealth();
       return;
     }
     closePointDetails();
