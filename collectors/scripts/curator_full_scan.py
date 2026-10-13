@@ -1,13 +1,13 @@
 """Curator Full Scan status for the ``curator_full_scan`` CLI metric.
 
-``python runner.py --run-type cli`` runs the ``curator_full_scan`` command of
-cli_metrics_catalog.json on every PE and stores its raw output in the
-curator_full_scan table, like every other CLI metric. This module turns one
-stored row into the Curator Full Scan result document shown on the Stats
-page: it reads the CVM marker, exit code and cluster VIP that the catalog
-command prints, selects only the table whose ``Job Name`` is exactly
-``Full Scan`` and classifies the result. Start and end times are reported
-exactly as curator_cli prints them.
+``python runner.py --run-type cli`` runs ``curator_cli
+get_last_successful_scans`` (the ``curator_full_scan`` entry of
+cli_metrics_catalog.json) once per PE, on the CVM CliProcessor logs in to
+(``build_command``), and stores its raw output in the curator_full_scan
+table, like every other CLI metric. This module turns one stored row into the
+Curator Full Scan result document shown on the Stats page: it selects only
+the table whose ``Job Name`` is exactly ``Full Scan`` and classifies the
+result. Start and end times are reported exactly as curator_cli prints them.
 """
 
 import re
@@ -33,7 +33,6 @@ COLLECTION_FAILED = "failed"
 EXECUTION_COMPLETED = "completed"
 EXECUTION_FAILED = "failed"
 
-SSH_EXECUTION_FAILED = "SSH_EXECUTION_FAILED"
 COMMAND_FAILED = "COMMAND_FAILED"
 NO_CURATOR_MASTER = "NO_CURATOR_MASTER"
 SCAN_STAT_PROTO_NOT_FOUND = "SCAN_STAT_PROTO_NOT_FOUND"
@@ -43,18 +42,8 @@ FULL_SCAN_NOT_FOUND = "FULL_SCAN_NOT_FOUND"
 FULL_SCAN_NOT_SUCCEEDED = "FULL_SCAN_NOT_SUCCEEDED"
 CLUSTER_ID_UNRESOLVED = "CLUSTER_ID_UNRESOLVED"
 
-_FAILED_CODES = {
-  SSH_EXECUTION_FAILED, COMMAND_FAILED, EMPTY_OUTPUT, MALFORMED_OUTPUT,
-}
+_FAILED_CODES = {COMMAND_FAILED, EMPTY_OUTPUT, MALFORMED_OUTPUT}
 _CURATOR_CONDITION_CODES = {NO_CURATOR_MASTER, SCAN_STAT_PROTO_NOT_FOUND}
-_EXECUTION_ERRORS = {
-  SSH_EXECUTION_FAILED: (
-    EXECUTION_FAILED,
-    "'{command}' could not be run on {ip}: {detail}",
-    "Check that the PE CVMs can reach each other over SSH and that the "
-    "curator_full_scan command in cli_metrics_catalog.json is unchanged.",
-  ),
-}
 
 _FIELDS = {
   "job name": "job_name",
@@ -79,9 +68,10 @@ _NO_MASTER_RE = re.compile(r"no curator master", re.IGNORECASE)
 _PROTO_NOT_FOUND_RE = re.compile(
   r"curator scan stat proto not found", re.IGNORECASE
 )
+_HOST_MARKER_RE = re.compile(r"^=+\s*(?P<ip>\d+\.\d+\.\d+\.\d+)\s*=+\s*$")
 
 
-def _issue(code, message, action):
+def build_issue(code, message, action):
   """
   Build one entry of a result's ``errors`` or ``warnings`` list.
 
@@ -145,7 +135,7 @@ def parse_scan_tables(output):
   return tables
 
 
-def _job_name(table):
+def get_job_name(table):
   """
   Return the ``Job Name`` value of a parsed scan table.
 
@@ -161,7 +151,7 @@ def _job_name(table):
   return next((value for key, value in table if key == "job name"), None)
 
 
-def normalize_status(status_raw):
+def normalize_scan_status(status_raw):
   """
   Map Curator success values (``0`` or ``Succeeded``) to ``Succeeded``.
 
@@ -184,7 +174,7 @@ def normalize_status(status_raw):
   return status
 
 
-def scan_status_category(status_raw):
+def get_scan_status_category(status_raw):
   """
   Map a raw Curator job status to a Stats page scan status category.
 
@@ -212,7 +202,7 @@ def scan_status_category(status_raw):
   return _SCAN_STATUS_ALIASES.get(value.lower(), SCAN_STATUS_UNKNOWN)
 
 
-def _to_int(value):
+def convert_to_int(value):
   """
   Convert a table value to int.
 
@@ -232,7 +222,7 @@ def _to_int(value):
     return None
 
 
-def _build_full_scan(table):
+def build_full_scan_details(table):
   """
   Build the ``full_scan`` object from a parsed Full Scan table.
 
@@ -262,7 +252,7 @@ def _build_full_scan(table):
   empty = [field for field in _NON_EMPTY_FIELDS if field in raw and not raw[field]]
   not_integer = [
     field for field in _INTEGER_FIELDS
-    if raw.get(field) and _to_int(raw[field]) is None
+    if raw.get(field) and convert_to_int(raw[field]) is None
   ]
   problems = []
   if missing:
@@ -274,7 +264,7 @@ def _build_full_scan(table):
   if duplicates:
     problems.append(f"duplicate fields {sorted(set(duplicates))}")
   if problems:
-    errors.append(_issue(
+    errors.append(build_issue(
       MALFORMED_OUTPUT,
       "Full Scan table is incomplete or malformed: " + "; ".join(problems) + ".",
       "Inspect command_result.raw_output; the curator_cli output format may "
@@ -284,12 +274,12 @@ def _build_full_scan(table):
   status_raw = raw.get("status")
   full_scan = {
     "job_name": raw.get("job_name"),
-    "job_id": _to_int(raw.get("job_id")),
-    "execution_id": _to_int(raw.get("execution_id")),
+    "job_id": convert_to_int(raw.get("job_id")),
+    "execution_id": convert_to_int(raw.get("execution_id")),
     "master_handle": raw.get("master_handle"),
-    "incarnation_id": _to_int(raw.get("incarnation_id")),
+    "incarnation_id": convert_to_int(raw.get("incarnation_id")),
     "status_raw": status_raw,
-    "status": normalize_status(status_raw),
+    "status": normalize_scan_status(status_raw),
     "start_time": raw.get("start_time"),
     "end_time": raw.get("end_time"),
   }
@@ -298,7 +288,7 @@ def _build_full_scan(table):
   if status_raw and (
       full_scan["status"] != STATUS_SUCCEEDED
       or (execution_id is not None and execution_id < 0)):
-    errors.append(_issue(
+    errors.append(build_issue(
       FULL_SCAN_NOT_SUCCEEDED,
       f"Curator reports no successful Full Scan (status_raw={status_raw!r}, "
       f"execution_id={execution_id}).",
@@ -308,14 +298,14 @@ def _build_full_scan(table):
   return full_scan, errors
 
 
-def _collection_status(errors, full_scan):
+def get_collection_status(errors, full_scan):
   """
   Classify a result as success, unavailable or failed.
 
   Parameters
   ----------
   errors : list
-    Issues collected by build_result.
+    Issues collected by build_full_scan_result.
   full_scan : dict or None
     Parsed Full Scan object, or None when no Full Scan table was parsed.
 
@@ -334,19 +324,15 @@ def _collection_status(errors, full_scan):
   return COLLECTION_SUCCESS if full_scan is not None else COLLECTION_FAILED
 
 
-def build_result(
+def build_full_scan_result(
     cluster_ip,
     exit_code,
     stdout,
     stderr="",
     cluster_id=None,
     cluster_name=None,
-    cluster_vip=None,
     command=COMMAND,
     collected_at=None,
-    execution_error=None,
-    execution_error_code=SSH_EXECUTION_FAILED,
-    cluster_info_error=None,
 ):
   """
   Build the ``curator_full_scan`` JSON document for one cluster.
@@ -372,19 +358,10 @@ def build_result(
     Cluster UUID from the framework's clusters table.
   cluster_name : str, optional
     Cluster name from the framework's clusters table.
-  cluster_vip : str, optional
-    Cluster virtual IP read from the CVM; equals cluster_ip when the
-    endpoint is configured by virtual IP.
   command : str
     Command that was executed.
   collected_at : str, optional
     When the row was stored (the table's ``created_at``).
-  execution_error : str, optional
-    Error detail when the command could not be run to completion.
-  execution_error_code : str
-    Issue code for execution_error; SSH_EXECUTION_FAILED.
-  cluster_info_error : str, optional
-    Why the cluster UUID could not be resolved.
 
   Returns
   -------
@@ -397,18 +374,11 @@ def build_result(
   warnings = []
   full_scan = None
 
-  if execution_error is not None:
-    execution_status, message, action = _EXECUTION_ERRORS[execution_error_code]
-    errors.append(_issue(
-      execution_error_code,
-      message.format(command=command, ip=cluster_ip, detail=execution_error),
-      action,
-    ))
-  elif exit_code == 0:
+  if exit_code == 0:
     execution_status = EXECUTION_COMPLETED
   else:
     execution_status = EXECUTION_FAILED
-    errors.append(_issue(
+    errors.append(build_issue(
       COMMAND_FAILED,
       f"'{command}' exited with code {exit_code} on {cluster_ip}.",
       "Run the command manually on a CVM of the cluster and check stderr "
@@ -416,68 +386,67 @@ def build_result(
     ))
 
   if _NO_MASTER_RE.search(combined):
-    errors.append(_issue(
+    errors.append(build_issue(
       NO_CURATOR_MASTER,
       "Curator reported no master; scan status is unavailable.",
       "Check the Curator service with 'cluster status | grep -i curator' "
       "and review ~/data/logs/curator*.",
     ))
   if _PROTO_NOT_FOUND_RE.search(combined):
-    errors.append(_issue(
+    errors.append(build_issue(
       SCAN_STAT_PROTO_NOT_FOUND,
       "Curator has no scan statistics recorded (scan stat proto not found).",
       "Curator may not have completed a scan since it started; wait for the "
       "next scheduled Full Scan and review ~/data/logs/curator*.",
     ))
 
-  if execution_error is None:
-    known_condition = any(
-      issue["code"] in _CURATOR_CONDITION_CODES for issue in errors
-    )
-    if not stdout.strip():
-      errors.append(_issue(
-        EMPTY_OUTPUT,
-        f"'{command}' produced no stdout.",
-        "Run the command manually on a CVM; confirm curator_cli is on the "
-        "login shell PATH and Curator is running.",
+  known_condition = any(
+    issue["code"] in _CURATOR_CONDITION_CODES for issue in errors
+  )
+  if not stdout.strip():
+    errors.append(build_issue(
+      EMPTY_OUTPUT,
+      f"'{command}' produced no stdout.",
+      "Run the command manually on a CVM; confirm curator_cli is on the "
+      "login shell PATH and Curator is running.",
+    ))
+  else:
+    tables = parse_scan_tables(stdout)
+    full_tables = [t for t in tables if get_job_name(t) == FULL_SCAN_JOB_NAME]
+    if not tables:
+      if not known_condition:
+        errors.append(build_issue(
+          MALFORMED_OUTPUT,
+          "No scan tables found in the command output.",
+          "Inspect command_result.raw_output; the curator_cli output "
+          "format may have changed.",
+        ))
+    elif not full_tables:
+      errors.append(build_issue(
+        FULL_SCAN_NOT_FOUND,
+        "No table with Job Name 'Full Scan' in the output; found "
+        f"{[get_job_name(t) for t in tables]}. Partial and Selective scans "
+        "are not used as a substitute.",
+        "Confirm Curator has completed at least one Full Scan on this "
+        "cluster.",
       ))
     else:
-      tables = parse_scan_tables(stdout)
-      full_tables = [t for t in tables if _job_name(t) == FULL_SCAN_JOB_NAME]
-      if not tables:
-        if not known_condition:
-          errors.append(_issue(
-            MALFORMED_OUTPUT,
-            "No scan tables found in the command output.",
-            "Inspect command_result.raw_output; the curator_cli output "
-            "format may have changed.",
-          ))
-      elif not full_tables:
-        errors.append(_issue(
-          FULL_SCAN_NOT_FOUND,
-          "No table with Job Name 'Full Scan' in the output; found "
-          f"{[_job_name(t) for t in tables]}. Partial and Selective scans "
-          "are not used as a substitute.",
-          "Confirm Curator has completed at least one Full Scan on this "
-          "cluster.",
+      if len(full_tables) > 1:
+        errors.append(build_issue(
+          MALFORMED_OUTPUT,
+          f"Found {len(full_tables)} Full Scan tables; expected exactly one.",
+          "Inspect command_result.raw_output for duplicated output.",
         ))
-      else:
-        if len(full_tables) > 1:
-          errors.append(_issue(
-            MALFORMED_OUTPUT,
-            f"Found {len(full_tables)} Full Scan tables; expected exactly one.",
-            "Inspect command_result.raw_output for duplicated output.",
-          ))
-        full_scan, scan_errors = _build_full_scan(full_tables[0])
-        errors.extend(scan_errors)
+      full_scan, scan_errors = build_full_scan_details(full_tables[0])
+      errors.extend(scan_errors)
 
   if not cluster_id:
-    warnings.append(_issue(
+    warnings.append(build_issue(
       CLUSTER_ID_UNRESOLVED,
-      f"Cluster UUID for {cluster_ip} could not be resolved: "
-      f"{cluster_info_error or 'not found in the clusters table'}.",
-      "Run the collector again so the clusters table is populated for this "
-      "PE, and check that the cluster has a virtual IP configured.",
+      f"Cluster UUID for {cluster_ip} could not be resolved: not found in "
+      "the clusters table.",
+      "Configure the PE by its cluster virtual IP in endpoints.json and run "
+      "the collector again so the clusters table is populated.",
     ))
 
   master = _MASTER_RE.search(stdout)
@@ -493,8 +462,7 @@ def build_result(
     "cluster_id": cluster_id or None,
     "cluster_name": cluster_name or None,
     "cluster_ip": cluster_ip,
-    "cluster_vip": cluster_vip or None,
-    "collection_status": _collection_status(errors, full_scan),
+    "collection_status": get_collection_status(errors, full_scan),
     "command_execution_status": execution_status,
     "full_scan_available": full_scan_available,
     "collected_at": collected_at,
@@ -512,17 +480,35 @@ def build_result(
 
 
 
-SSH_FAILED_EXIT_CODE = 255
-_HOST_MARKER_RE = re.compile(r"^=+\s*(?P<ip>\d+\.\d+\.\d+\.\d+)\s*=+\s*$")
-_EXIT_CODE_RE = re.compile(r"^CZMON_EXIT_CODE=(?P<code>-?\d+)\s*$")
-_CLUSTER_VIP_RE = re.compile(
-  r'^CZMON_cluster_external_ip:\s*"?(?P<ip>[^"\s]+)"?\s*$'
-)
-
-
-def _split_cvm_blocks(output):
+def build_command(command):
   """
-  Split stored CLI output into the per-CVM blocks printed by the svmips loop.
+  Shell command CliProcessor runs on the PE for the catalog command.
+
+  curator_cli gives the same cluster-wide answer on every CVM, so it runs
+  once, on the CVM CliProcessor logged in to (the endpoint IP from
+  endpoints.json: the cluster virtual IP or a CVM IP). It runs in a login
+  shell because curator_cli needs PATH and ZOOKEEPER_HOST_PORT_LIST from
+  /etc/profile; without them newer AOS versions abort it.
+
+  Parameters
+  ----------
+  command : str
+    The curator_full_scan catalog command.
+
+  Returns
+  -------
+  str
+    The command to run over SSH.
+  """
+  return f"bash -lc '{command}'"
+
+
+def split_output_by_cvm(output):
+  """
+  Split stored CLI output into per-CVM blocks.
+
+  Rows stored before ``build_command`` existed hold the svmips loop output,
+  with a marker line per CVM; current rows have no markers.
 
   Parameters
   ----------
@@ -532,7 +518,7 @@ def _split_cvm_blocks(output):
   Returns
   -------
   list
-    ``(cvm_ip, lines)`` tuples in output order; cvm_ip is None for output
+    ``(cvm_ip, text)`` tuples in output order; cvm_ip is None for output
     before the first marker.
   """
   blocks = []
@@ -541,22 +527,45 @@ def _split_cvm_blocks(output):
     marker = _HOST_MARKER_RE.match(line.strip())
     if marker:
       if cvm_ip is not None or lines:
-        blocks.append((cvm_ip, lines))
+        blocks.append((cvm_ip, "\n".join(lines)))
       cvm_ip, lines = marker.group("ip"), []
       continue
     lines.append(line)
   if cvm_ip is not None or lines:
-    blocks.append((cvm_ip, lines))
+    blocks.append((cvm_ip, "\n".join(lines)))
   return blocks
 
 
-def parse_cli_output(output):
+def is_curator_answer(text):
   """
-  Read the curator_cli answer and the CZMON_* lines from stored CLI output.
+  Return whether a CVM block holds a curator_cli answer.
 
-  The catalog command stops at the first CVM it can reach over SSH, so the
-  last block holds the curator_cli answer; earlier blocks are CVMs that
-  could not be reached.
+  Parameters
+  ----------
+  text : str
+    Output of one CVM.
+
+  Returns
+  -------
+  bool
+    True when the block has a scan table or a Curator status message.
+  """
+  return bool(
+    parse_scan_tables(text)
+    or _MASTER_RE.search(text)
+    or _NO_MASTER_RE.search(text)
+    or _PROTO_NOT_FOUND_RE.search(text)
+  )
+
+
+def get_curator_answer(output):
+  """
+  Pick the curator_cli answer out of the stored output.
+
+  Current rows hold one curator_cli answer. Older rows hold one block per
+  CVM; for those the answer used is the first CVM whose output has a Full
+  Scan table, else the first CVM with any Curator answer, else the first CVM
+  with any output.
 
   Parameters
   ----------
@@ -566,40 +575,26 @@ def parse_cli_output(output):
   Returns
   -------
   dict
-    ``cvm_ip``, ``stdout`` (curator_cli output without the CZMON_* lines),
-    ``exit_code`` (int or None when no CZMON_EXIT_CODE line was printed),
-    ``cluster_vip`` and ``unreachable_cvms``.
+    ``cvm_ip`` (the CVM whose answer is used; None when the output has no
+    CVM markers) and ``stdout`` (that CVM's output).
   """
-  blocks = _split_cvm_blocks(output)
-  parsed = {
-    "cvm_ip": None, "stdout": "", "exit_code": None,
-    "cluster_vip": None, "unreachable_cvms": [],
-  }
-  if not blocks:
-    return parsed
-  for cvm_ip, lines in blocks[:-1]:
-    if cvm_ip:
-      parsed["unreachable_cvms"].append(cvm_ip)
-  cvm_ip, lines = blocks[-1]
-  parsed["cvm_ip"] = cvm_ip
-  stdout_lines = []
-  for line in lines:
-    stripped = line.strip()
-    exit_code = _EXIT_CODE_RE.match(stripped)
-    vip = _CLUSTER_VIP_RE.match(stripped)
-    if exit_code:
-      parsed["exit_code"] = int(exit_code.group("code"))
-    elif vip:
-      parsed["cluster_vip"] = vip.group("ip")
-    elif not stripped.startswith("CZMON_"):
-      stdout_lines.append(line)
-  parsed["stdout"] = "\n".join(stdout_lines)
-  return parsed
+  blocks = [(cvm_ip, text) for cvm_ip, text in split_output_by_cvm(output)
+            if text.strip()]
+  has_full_scan = [
+    block for block in blocks
+    if any(get_job_name(t) == FULL_SCAN_JOB_NAME for t in parse_scan_tables(block[1]))
+  ]
+  answers = [block for block in blocks if is_curator_answer(block[1])]
+  chosen = (has_full_scan or answers or blocks or [(None, "")])[0]
+  return {"cvm_ip": chosen[0], "stdout": chosen[1]}
 
 
-def build_result_from_cli_row(row, clusters=None):
+def build_full_scan_result_from_row(row, clusters=None):
   """
   Build the result document for one row of the curator_full_scan table.
+
+  CliProcessor stores a row only when the command exited with 0, so the exit
+  code of a stored row is 0.
 
   Parameters
   ----------
@@ -613,32 +608,19 @@ def build_result_from_cli_row(row, clusters=None):
   Returns
   -------
   dict
-    The build_result document, plus ``cvm_ip`` and ``unreachable_cvms``.
+    The build_full_scan_result document, plus ``cvm_ip`` (the CVM that answered; the
+    endpoint IP for rows without CVM markers).
   """
-  clusters = clusters or {}
   ip = row.get("ip")
-  parsed = parse_cli_output(row.get("output"))
-  vip = parsed["cluster_vip"]
-  identity = clusters.get(vip) or clusters.get(ip) or {}
-
-  execution_error = None
-  if parsed["exit_code"] is None:
-    execution_error = "the output has no CZMON_EXIT_CODE line"
-  elif parsed["exit_code"] == SSH_FAILED_EXIT_CODE:
-    execution_error = (
-      f"SSH from the PE to its CVMs failed (last tried {parsed['cvm_ip']})"
-    )
-
-  result = build_result(
+  parsed = get_curator_answer(row.get("output"))
+  identity = (clusters or {}).get(ip) or {}
+  result = build_full_scan_result(
     cluster_ip=ip,
-    exit_code=parsed["exit_code"],
+    exit_code=0,
     stdout=parsed["stdout"],
     cluster_id=identity.get("uuid"),
     cluster_name=identity.get("name") or row.get("cluster_name"),
-    cluster_vip=vip,
     collected_at=row.get("created_at"),
-    execution_error=execution_error,
   )
-  result["cvm_ip"] = parsed["cvm_ip"]
-  result["unreachable_cvms"] = parsed["unreachable_cvms"]
+  result["cvm_ip"] = parsed["cvm_ip"] or (ip if parsed["stdout"] else None)
   return result

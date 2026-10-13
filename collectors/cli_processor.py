@@ -8,6 +8,8 @@ from library.urls import CLUSTER
 import os
 import re
 import json
+import importlib
+import importlib.util
 from numbers import Number
 
 LOGGER = setup_logger(__name__)
@@ -261,6 +263,27 @@ class CliProcessor:
       self.db_worker.insert_row(table_name, row)
 
   @EntryExit
+  def _build_full_command(self, table_name, command):
+    """
+    Build the shell command run on the endpoint for one catalog command.
+
+    By default the command runs on every CVM via svmips. A metric can
+    replace this by defining build_command(command) in
+    collectors/scripts/<table_name>.py.
+    """
+    module_name = f"collectors.scripts.{table_name}"
+    if importlib.util.find_spec(module_name):
+      build_command = getattr(
+        importlib.import_module(module_name), "build_command", None
+      )
+      if build_command:
+        return build_command(command)
+    return (f"bash -lc 'for i in $(svmips); "
+            f"do echo \"================== $i "
+            f"=================\"; ssh $i "
+            f"{command}; done'")
+
+  @EntryExit
   def process_data(self, config):
     """
     Execute CLI commands for given configuration and persist results.
@@ -287,10 +310,7 @@ class CliProcessor:
             for command in commands:
               try:
                 values = {}
-                full_command = (f"bash -lc 'for i in $(svmips); "
-                                f"do echo \"================== $i "
-                                f"=================\"; ssh $i "
-                                f"{command}; done'")
+                full_command = self._build_full_command(table_name, command)
                 output = ssh_obj.execute(full_command)
                 LOGGER.info(
                   "Output for command '%s' on %s: %s",

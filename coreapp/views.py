@@ -7,9 +7,6 @@ from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from urllib.parse import quote_plus
 from library.const import *
-from collectors.scripts.curator_full_scan import (
-  build_result_from_cli_row, scan_status_category,
-)
 import json
 import math
 import os
@@ -1436,6 +1433,8 @@ def _curator_clusters(conn):
 
 def _curator_target_names(table_name):
   """Map Curator target IPs to the cluster name of their latest collection."""
+  from collectors.scripts.curator_full_scan import build_full_scan_result_from_row
+
   db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
   names = {}
   if not os.path.exists(db_path):
@@ -1454,7 +1453,7 @@ def _curator_target_names(table_name):
         ip = str(row["ip"]).strip()
         if not ip or ip in names:
           continue
-        name = build_result_from_cli_row(dict(row), clusters).get("cluster_name")
+        name = build_full_scan_result_from_row(dict(row), clusters).get("cluster_name")
         if name:
           names[ip] = str(name)
   except sqlite3.Error:
@@ -1681,11 +1680,13 @@ def _normalize_stats_payload(stat_key, payload):
     }
 
   if stat_key == "curator_full_scan":
+    from collectors.scripts.curator_full_scan import get_scan_status_category
+
     full_scan = payload.get("full_scan") or {}
     command_result = payload.get("command_result") or {}
     collection_status = payload.get("collection_status") or "unknown"
     availability = "available" if payload.get("full_scan_available") else "unavailable"
-    scan_status = scan_status_category(full_scan.get("status_raw"))
+    scan_status = get_scan_status_category(full_scan.get("status_raw"))
     summary = (
       f"Scan status: {scan_status} | Collection {collection_status} | Parsed status: "
       f"{full_scan.get('status') or 'n/a'} | Raw status: "
@@ -1839,9 +1840,10 @@ def stats_data_api(request):
         {limit_clause}
       """
       rows = cursor.execute(query, params).fetchall()
-      curator_clusters = (
-        _curator_clusters(conn) if config.get("parser") == "curator_full_scan" else None
-      )
+      curator_clusters = None
+      if config.get("parser") == "curator_full_scan":
+        from collectors.scripts.curator_full_scan import build_full_scan_result_from_row
+        curator_clusters = _curator_clusters(conn)
 
       for row in rows:
         row_dict = dict(row)
@@ -1854,7 +1856,7 @@ def stats_data_api(request):
         )
         raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
         if curator_clusters is not None:
-          payload = build_result_from_cli_row(row_dict, curator_clusters)
+          payload = build_full_scan_result_from_row(row_dict, curator_clusters)
         elif isinstance(raw_data, (dict, list)):
           payload = raw_data
         else:
