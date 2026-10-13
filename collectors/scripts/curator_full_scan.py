@@ -478,8 +478,6 @@ def build_full_scan_result(
     },
   }
 
-
-
 def build_command(command):
   """
   Shell command CliProcessor runs on the PE for the catalog command.
