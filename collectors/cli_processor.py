@@ -8,8 +8,6 @@ from library.urls import CLUSTER
 import os
 import re
 import json
-import importlib
-import importlib.util
 from numbers import Number
 
 LOGGER = setup_logger(__name__)
@@ -263,27 +261,6 @@ class CliProcessor:
       self.db_worker.insert_row(table_name, row)
 
   @EntryExit
-  def _build_full_command(self, table_name, command):
-    """
-    Build the shell command run on the endpoint for one catalog command.
-
-    By default the command runs on every CVM via svmips. A metric can
-    replace this by defining build_command(command) in
-    collectors/scripts/<table_name>.py.
-    """
-    module_name = f"collectors.scripts.{table_name}"
-    if importlib.util.find_spec(module_name):
-      build_command = getattr(
-        importlib.import_module(module_name), "build_command", None
-      )
-      if build_command:
-        return build_command(command)
-    return (f"bash -lc 'for i in $(svmips); "
-            f"do echo \"================== $i "
-            f"=================\"; ssh $i "
-            f"{command}; done'")
-
-  @EntryExit
   def process_data(self, config):
     """
     Execute CLI commands for given configuration and persist results.
@@ -292,12 +269,15 @@ class CliProcessor:
     ----------
     config : dict
       Configuration containing table name, endpoint type,
-      and list of commands to execute.
+      and list of commands to execute. An entry with
+      "run_once_per_endpoint": true runs its commands once, in a login
+      shell on the endpoint CVM, instead of on every CVM via svmips.
     """
     try:
       for table_name, entity_data in config.items():
         endpoint_type = entity_data.get("endpoint_type")
         commands = entity_data.get("command", [])
+        run_once = entity_data.get("run_once_per_endpoint", False)
         ip_endpoints = [
           (ip, et)
           for et in endpoint_type
@@ -310,7 +290,13 @@ class CliProcessor:
             for command in commands:
               try:
                 values = {}
-                full_command = self._build_full_command(table_name, command)
+                if run_once:
+                  full_command = f"bash -lc '{command}'"
+                else:
+                  full_command = (f"bash -lc 'for i in $(svmips); "
+                                  f"do echo \"================== $i "
+                                  f"=================\"; ssh $i "
+                                  f"{command}; done'")
                 output = ssh_obj.execute(full_command)
                 LOGGER.info(
                   "Output for command '%s' on %s: %s",

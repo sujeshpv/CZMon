@@ -2,9 +2,9 @@
 
 ``python runner.py --run-type cli`` runs ``curator_cli
 get_last_successful_scans`` (the ``curator_full_scan`` entry of
-cli_metrics_catalog.json) once per PE, on the CVM CliProcessor logs in to
-(``build_command``), and stores its raw output in the curator_full_scan
-table, like every other CLI metric. This module turns one stored row into the
+cli_metrics_catalog.json, with ``run_once_per_endpoint``) once per PE, on
+the CVM CliProcessor logs in to, and stores its raw output in the
+curator_full_scan table, like every other CLI metric. This module turns one stored row into the
 Curator Full Scan result document shown on the Stats page: it selects only
 the table whose ``Job Name`` is exactly ``Full Scan`` and classifies the
 result. Start and end times are reported exactly as curator_cli prints them.
@@ -478,34 +478,11 @@ def build_full_scan_result(
     },
   }
 
-def build_command(command):
-  """
-  Shell command CliProcessor runs on the PE for the catalog command.
-
-  curator_cli gives the same cluster-wide answer on every CVM, so it runs
-  once, on the CVM CliProcessor logged in to (the endpoint IP from
-  endpoints.json: the cluster virtual IP or a CVM IP). It runs in a login
-  shell because curator_cli needs PATH and ZOOKEEPER_HOST_PORT_LIST from
-  /etc/profile; without them newer AOS versions abort it.
-
-  Parameters
-  ----------
-  command : str
-    The curator_full_scan catalog command.
-
-  Returns
-  -------
-  str
-    The command to run over SSH.
-  """
-  return f"bash -lc '{command}'"
-
-
 def split_output_by_cvm(output):
   """
   Split stored CLI output into per-CVM blocks.
 
-  Rows stored before ``build_command`` existed hold the svmips loop output,
+  Rows stored before ``run_once_per_endpoint`` existed hold the svmips loop output,
   with a marker line per CVM; current rows have no markers.
 
   Parameters

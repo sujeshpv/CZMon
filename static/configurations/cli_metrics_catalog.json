@@ -12,8 +12,9 @@
   },
 
   "curator_full_scan": {
-    "description": "Last successful Curator scans of each PE, run once on the CVM the collector logs in to (see build_command in collectors/scripts/curator_full_scan.py, which also filters the Full Scan details).",
+    "description": "Last successful Curator scans of each PE, run once on the CVM the collector logs in to; the Full Scan details are filtered by collectors/scripts/curator_full_scan.py.",
     "command": ["curator_cli get_last_successful_scans"],
-    "endpoint_type": ["PE"]
+    "endpoint_type": ["PE"],
+    "run_once_per_endpoint": true
   }
 }
