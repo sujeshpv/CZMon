@@ -175,8 +175,7 @@
       {"key": "ngt_enabled", "label": "NGT Enabled", "color": "#1769b0", "axis": "y"},
       {"key": "ngt_reachable", "label": "NGT Reachable", "color": "#6f42c1", "axis": "y"}
     ]
-  }
-
+  },
   "ssh_connections": {
     "name": "SSH Connections",
     "table_name": "check_ssh_connections",
