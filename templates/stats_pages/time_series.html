@@ -29,6 +29,13 @@
   .detail-selectors { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0; }
   .detail-selectors .filter-select { min-width: 220px; }
   .detail-help { color: #66717d; margin: 14px 0 0; }
+  .latest-metric { align-items: baseline; display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: center; margin: 0 0 18px; }
+  .latest-metric[hidden] { display: none; }
+  .latest-metric-label { color: #66717d; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+  .latest-metric-value { color: #14589b; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; }
+  .latest-metric-meta { color: #66717d; font-size: 13px; }
+  .chart-frame[hidden] { display: none; }
+  .time-options[hidden] { display: none; }
   .stats-filter-row .vm-search-input { min-width: 220px; }
   .stats-filter-row #vmFilter { min-width: 260px; }
   .stats-filter-row .ngt-filter-select { min-width: 180px; }
@@ -87,14 +94,33 @@
     </select>
   </label>
   {% endif %}
+  {% if selected_stat.parser == "objects_lite_health" %}
+  <label class="filter-item" for="objectsLiteStateFilter">
+    <span class="filter-label">Pod State</span>
+    <select class="filter-select ngt-filter-select" id="objectsLiteStateFilter" disabled>
+      <option value="">Select a PC first</option>
+      <option value="Pending">Pending</option>
+      <option value="Running">Running</option>
+      <option value="Succeeded">Succeeded</option>
+      <option value="Failed">Failed</option>
+    </select>
+  </label>
+  {% endif %}
 </section>
 
-{% if selected_stat.parser != "ngt_status" %}
+{% if selected_stat.parser != "ngt_status" and selected_stat.parser != "objects_lite_health" %}
 <section class="stats-panel" id="statsChartPanel">
   <div class="chart-title">{{ selected_stat.name }}</div>
-  <div class="chart-frame"><canvas id="statsChart"></canvas></div>
+  <div class="latest-metric" id="latestMetric" hidden>
+    <div>
+      <div class="latest-metric-label">Latest</div>
+      <div class="latest-metric-value" id="latestMetricValue">—</div>
+    </div>
+    <div class="latest-metric-meta" id="latestMetricMeta"></div>
+  </div>
+  <div class="chart-frame" id="chartFrame"><canvas id="statsChart"></canvas></div>
   <div class="stats-status" id="statsStatus">Loading data…</div>
-  <div class="time-options">
+  <div class="time-options" id="timeOptions">
     <button class="time-btn" data-range="12h" type="button">12 Hours</button>
     <button class="time-btn" data-range="24h" type="button">24 Hours</button>
     <button class="time-btn" data-range="7d" type="button">7 Days</button>
@@ -145,18 +171,106 @@
   const ngtStateFilter = document.getElementById("ngtStateFilter");
   const ngtEnabledFilter = document.getElementById("ngtEnabledFilter");
   const ngtReachableFilter = document.getElementById("ngtReachableFilter");
+  const objectsLiteStateFilter = document.getElementById("objectsLiteStateFilter");
   const pointDetailsPanel = document.getElementById("pointDetailsPanel");
   const pointDetailsClear = document.getElementById("pointDetailsClear");
   const pointDetailsTarget = document.getElementById("pointDetailsTarget");
   const pointDetailsTimestamp = document.getElementById("pointDetailsTimestamp");
   const pointDetailsSummary = document.getElementById("pointDetailsSummary");
   const pointMetricDetails = document.getElementById("pointMetricDetails");
+  const latestMetric = document.getElementById("latestMetric");
+  const latestMetricValue = document.getElementById("latestMetricValue");
+  const latestMetricMeta = document.getElementById("latestMetricMeta");
+  const chartFrame = document.getElementById("chartFrame");
+  const timeOptions = document.getElementById("timeOptions");
   const statsChartPanel = document.getElementById("statsChartPanel");
   const datasetConfig = config.datasets || [{
     key: "value", label: config.name, color: "#1769b0", axis: "y"
   }];
+  const isBarChart = (config.chart_type || "line") === "bar";
+  const requireTarget = Boolean(config.require_target);
   let currentRange = "90d";
   let pointRecords = [];
+  let clusterVms = [];
+  let selectedVmUuid = "";
+  let lastNgtPointItem = null;
+
+  function isNgtStat() {
+    return config.parser === "ngt_status";
+  }
+
+  function isObjectsLiteStat() {
+    return config.parser === "objects_lite_health";
+  }
+
+  function objectsLitePhaseFromDetails(details) {
+    const pods = Array.isArray(details?.pods) ? details.pods : [];
+    const primary = pods.find((pod) => pod.name === "objects-lite-0") || pods[0] || {};
+    const phase = String(
+      details?.phase || primary.phase || primary.status || ""
+    );
+    return { phase, pods, primary };
+  }
+
+  function setObjectsLiteStatePlaceholder(text) {
+    if (!objectsLiteStateFilter) return;
+    objectsLiteStateFilter.disabled = true;
+    const first = objectsLiteStateFilter.options[0];
+    if (first && first.value === "") first.textContent = text;
+    objectsLiteStateFilter.value = "";
+  }
+
+  function resetObjectsLiteStateFilter() {
+    if (!isObjectsLiteStat() || !objectsLiteStateFilter) return;
+    setObjectsLiteStatePlaceholder("Select a PC first");
+  }
+
+  function syncObjectsLiteStateFilter(details) {
+    if (!isObjectsLiteStat() || !objectsLiteStateFilter) return;
+    objectsLiteStateFilter.disabled = true;
+    const { phase } = objectsLitePhaseFromDetails(details);
+    if (["Pending", "Running", "Succeeded", "Failed"].includes(phase)) {
+      setObjectsLiteStatePlaceholder("Select a PC first");
+      objectsLiteStateFilter.value = phase;
+      return;
+    }
+    setObjectsLiteStatePlaceholder(phase && phase !== "Unknown" ? phase : "Unknown");
+  }
+
+  function showLatestObjectsLiteDetails() {
+    if (!isObjectsLiteStat()) return;
+    if (!targetFilter.value) {
+      resetObjectsLiteStateFilter();
+      closePointDetails();
+      return;
+    }
+    if (!pointRecords.length) {
+      const pcName = targetNames[targetFilter.value] || targetFilter.value;
+      setObjectsLiteStatePlaceholder("Unknown");
+      showPointDetails({
+        ip: targetFilter.value,
+        timestamp: new Date().toISOString(),
+        summary: "No Objects Lite data has been collected for this PC yet.",
+        details: {
+          pc_name: pcName,
+          phase: "Unknown",
+          status: "Unknown",
+          pods: []
+        }
+      });
+      return;
+    }
+    const item = pointRecords[pointRecords.length - 1];
+    syncObjectsLiteStateFilter(parsePointDetails(item));
+    showPointDetails(item);
+  }
+
+  function showLatestNgtDetails() {
+    if (!isNgtStat() || !pointRecords.length) return;
+    lastNgtPointItem = null;
+    showPointDetails(pointRecords[pointRecords.length - 1]);
+  }
+
   const statusLevels = Array.isArray(config.status_levels) ? config.status_levels : null;
 
   function statusLevelValue(label) {
@@ -173,18 +287,11 @@
     const fullScan = item.data?.full_scan || {};
     if (fullScan.end_time) return fullScan.end_time;
     return `${item.timestamp} (collected, no Full Scan)`;
-  let clusterVms = [];
-  let selectedVmUuid = "";
-  let lastNgtPointItem = null;
-
-  function isNgtStat() {
-    return config.parser === "ngt_status";
   }
 
-  function showLatestNgtDetails() {
-    if (!isNgtStat() || !pointRecords.length) return;
-    lastNgtPointItem = null;
-    showPointDetails(pointRecords[pointRecords.length - 1]);
+  function setChartVisible(visible) {
+    chartFrame.hidden = !visible;
+    timeOptions.hidden = !visible;
   }
 
   function chartScales() {
@@ -226,6 +333,31 @@
     return scales;
   }
 
+
+  function updateLatestMetric(series) {
+    if (config.parser !== "controller_iops") {
+      latestMetric.hidden = true;
+      return;
+    }
+    if (!series.length) {
+      latestMetric.hidden = true;
+      latestMetricValue.textContent = "—";
+      latestMetricMeta.textContent = "";
+      return;
+    }
+    const latest = series[series.length - 1];
+    const source = latest.values || latest.data || {};
+    const iops = Number(source.controller_iops);
+    latestMetricValue.textContent = Number.isFinite(iops)
+      ? iops.toLocaleString()
+      : "—";
+    const when = latest.timestamp
+      ? new Date(latest.timestamp).toLocaleString()
+      : "";
+    latestMetricMeta.textContent = [latest.ip, when].filter(Boolean).join(" · ");
+    latestMetric.hidden = false;
+  }
+
   const statsChartCanvas = document.getElementById("statsChart");
   const chart = statsChartCanvas ? new Chart(statsChartCanvas, {
     type: config.chart_type || "line",
@@ -233,11 +365,13 @@
         label: item.label,
         data: [],
         borderColor: item.color,
-        backgroundColor: item.color,
-        borderWidth: 3,
+        backgroundColor: isBarChart ? `${item.color}cc` : item.color,
+        borderWidth: isBarChart ? 1 : 3,
+        borderRadius: isBarChart ? 4 : 0,
+        maxBarThickness: isBarChart ? 48 : undefined,
         fill: false,
-        pointRadius: 4,
-        pointHoverRadius: 7,
+        pointRadius: isBarChart ? 0 : 4,
+        pointHoverRadius: isBarChart ? 0 : 7,
         tension: .15,
         stepped: Boolean(item.stepped),
         yAxisID: item.axis || "y",
@@ -407,6 +541,15 @@
       .sort((a, b) => Number(b[1]) - Number(a[1]))
       .map(([ip, count]) => [ip, Number(count)]);
     addDetailTable(["CVM", "ESTABLISHED SSH"], cvmRows);
+  }
+
+  function renderControllerIopsDetails(details) {
+    let parsedData = details;
+    if (typeof parsedData === "string") { try { parsedData = JSON.parse(parsedData); } catch(e){} }
+
+    addDetailCards([
+      ["Controller IOPS", Number(parsedData?.controller_iops || 0)]
+    ]);
   }
 
   function renderAhvDetails(details) {
@@ -714,10 +857,55 @@
     }
   }
 
+  function renderObjectsLiteDetails(details) {
+    syncObjectsLiteStateFilter(details);
+    const { phase, pods } = objectsLitePhaseFromDetails(details);
+    const podList = pods.length ? pods : (phase && phase !== "Unknown" ? [{
+      name: details?.pod_name || "objects-lite-0",
+      namespace: details?.namespace || "pc-platform-nci",
+      phase,
+      status: phase,
+      ready: details?.ready || "",
+      restarts: details?.restarts || "",
+      age: details?.running_for || "",
+      running_for: details?.running_for || ""
+    }] : []);
+
+    if (details?.error) {
+      addDetailCards([["Error", details.error]]);
+    }
+    if (!podList.length) {
+      addDetailCards([
+        ["PC", details?.pc_name || "Unknown"],
+        ["Pod", "Not found for the selected PC"],
+        ["Pod State", phase || "Unknown"],
+        ["Running For", details?.running_for || ""],
+        ["Status", details?.status || phase || "Unknown"]
+      ]);
+      return;
+    }
+
+    podList.forEach((pod) => {
+      const podState = String(pod.phase || pod.status || phase || "Unknown");
+      addDetailCards([
+        ["PC", details?.pc_name || "Unknown"],
+        ["Pod", pod.name || details?.pod_name || "objects-lite-0"],
+        ["Namespace", pod.namespace || details?.namespace || "pc-platform-nci"],
+        ["Pod State", podState],
+        ["Running For", pod.age || pod.running_for || details?.running_for || "Unknown"],
+        ["Ready", pod.ready || details?.ready || ""],
+        ["Restarts", pod.restarts || details?.restarts || ""],
+        ["Status", pod.status || details?.status || podState]
+      ]);
+    });
+  }
+
   function showPointDetails(item) {
     if (!item) return;
     const date = new Date(item.timestamp);
-    const details = item.details ?? item.data ?? {};
+    const details = isObjectsLiteStat()
+      ? parsePointDetails(item)
+      : (item.details ?? item.data ?? {});
     pointDetailsTarget.textContent = item.ip || "Unknown";
     pointDetailsTimestamp.textContent = date.toLocaleString();
     pointDetailsSummary.textContent = item.summary || "Collected metric details";
@@ -740,9 +928,11 @@
     else if (config.parser === "snapshot_usage") renderSnapshotDetails(details);
     else if (config.parser === "expired_snapshots") renderExpiredSnapshotDetails(details);
     else if (config.parser === "node_crash") renderCrashDetails(details);
-    else if (config.parser === "curator_full_scan") renderCuratorDetails(details);
     else if (config.parser === "ngt_status") renderNgtDetails(details);
+    else if (config.parser === "curator_full_scan") renderCuratorDetails(details);
     else if (config.parser === "ssh_connections") renderSshConnectionDetails(details);
+    else if (config.parser === "controller_iops") renderControllerIopsDetails(details);
+    else if (config.parser === "objects_lite_health") renderObjectsLiteDetails(details);
     else renderGenericDetails(details);
 
     pointDetailsPanel.hidden = false;
@@ -754,27 +944,15 @@
     pointMetricDetails.replaceChildren();
   }
 
-  function clearChart(message) {
+  function clearChart() {
     pointRecords = [];
     chart.data.labels = [];
     chart.data.datasets.forEach((dataset) => { dataset.data = []; });
     chart.update();
+    latestMetric.hidden = true;
     closePointDetails();
-    status.hidden = false;
-    status.classList.remove("error");
-    status.textContent = message;
   }
 
-  async function fetchStatsData() {
-    const target = targetFilter.value;
-    if (config.require_target && !target) {
-      clearChart(`Select a ${targetLabel()} to view data.`);
-      return;
-    }
-
-    status.hidden = false;
-    status.classList.remove("error");
-    status.textContent = "Loading data…";
   function parsePointDetails(item) {
     let details = item?.details ?? item?.data ?? {};
     if (typeof details === "string") {
@@ -960,6 +1138,18 @@
       status.classList.remove("error");
       status.textContent = "Loading data…";
     }
+
+    const target = targetFilter.value;
+    if (requireTarget && !target) {
+      clearChart();
+      setChartVisible(false);
+      status.textContent = `Select a ${targetLabel().toLowerCase()} to view ${config.name || "this metric"}.`;
+      return;
+    }
+
+    setChartVisible(true);
+    status.textContent = "Loading data…";
+
     const params = new URLSearchParams({ stat: "{{ selected_stat_key|escapejs }}", range: currentRange });
     if (target) params.set("target", target);
     if (setupTypeFilter.value) params.set("endpoint_type", setupTypeFilter.value);
@@ -982,6 +1172,10 @@
           closePointDetails();
         }
         syncVmFilterFromSeries(series);
+        return;
+      }
+      if (isObjectsLiteStat()) {
+        showLatestObjectsLiteDetails();
         return;
       }
 
@@ -1063,11 +1257,16 @@
         );
       });
       chart.update();
+      updateLatestMetric(series);
 
       status.hidden = series.length > 0;
       status.textContent = series.length ? "" : "No data is available for these filters and time range.";
       syncVmFilterFromSeries(series);
     } catch (error) {
+      latestMetric.hidden = true;
+      status.hidden = false;
+      status.classList.add("error");
+      status.textContent = error.message;
       if (status) {
         status.hidden = false;
         status.classList.add("error");
@@ -1118,6 +1317,7 @@
     targetFilterLabel.textContent = label;
     replaceOptions(targetFilter, `Select ${label}`, options);
     if (isNgtStat()) resetVmFilter();
+    if (isObjectsLiteStat()) resetObjectsLiteStateFilter();
   }
 
   const supportedTypes = config.endpoint_types || ["PC", "PE"];
@@ -1169,12 +1369,19 @@
     if (ngtEnabledFilter) ngtEnabledFilter.addEventListener("change", applyNgtFilters);
     if (ngtReachableFilter) ngtReachableFilter.addEventListener("change", applyNgtFilters);
   }
+  if (isObjectsLiteStat() && objectsLiteStateFilter) {
+    objectsLiteStateFilter.disabled = true;
+  }
   pointDetailsClear.addEventListener("click", () => {
     if (isNgtStat()) {
       selectedVmUuid = "";
       if (vmSearch) vmSearch.value = "";
       refreshVmOptions();
       showLatestNgtDetails();
+      return;
+    }
+    if (isObjectsLiteStat()) {
+      showLatestObjectsLiteDetails();
       return;
     }
     closePointDetails();

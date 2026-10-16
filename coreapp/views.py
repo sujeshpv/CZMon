@@ -1720,6 +1720,29 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "ngt_status":
+    installed = int(_stats_number(payload.get("ngt_installed")))
+    not_installed = int(_stats_number(payload.get("ngt_not_installed")))
+    enabled = int(_stats_number(payload.get("ngt_enabled")))
+    disabled = int(_stats_number(payload.get("ngt_disabled")))
+    reachable = int(_stats_number(payload.get("ngt_reachable")))
+    total = int(_stats_number(payload.get("total_vms")))
+    return {
+      "values": {
+        "ngt_installed": installed,
+        "ngt_not_installed": not_installed,
+        "ngt_enabled": enabled,
+        "ngt_disabled": disabled,
+        "ngt_reachable": reachable,
+      },
+      "summary": (
+        f"{payload.get('Cluster_name') or 'Cluster'}: {installed} NGT installed, "
+        f"{not_installed} not installed, {enabled} enabled, {disabled} disabled, "
+        f"{reachable} reachable of {total} VM(s)."
+      ),
+      "details": payload,
+    }
+
   if stat_key == "ssh_connections":
     highest = int(_stats_number(payload.get("highest_established")))
     total = int(
@@ -1732,6 +1755,28 @@ def _normalize_stats_payload(stat_key, payload):
         f"SSH ESTABLISHED: highest {highest} per CVM | "
         f"cluster total {total} | status {status}."
       ),
+      "details": payload,
+    }
+
+  if stat_key == "controller_iops":
+    iops = _stats_number(payload.get("controller_iops"))
+    return {
+      "values": {"controller_iops": iops},
+      "summary": f"Controller IOPS: {iops:g}.",
+      "details": payload,
+    }
+
+  if stat_key == "objects_lite_health":
+    phase = str(payload.get("phase") or payload.get("status") or "Unknown")
+    pc_name = payload.get("pc_name") or "Prism Central"
+    running_for = str(payload.get("running_for") or "").strip()
+    summary = f"{pc_name}: objects-lite is {phase}"
+    if running_for:
+      summary += f", running for {running_for}"
+    summary += "."
+    return {
+      "values": {"status": 1 if phase == "Running" else 0},
+      "summary": summary,
       "details": payload,
     }
 
@@ -1845,6 +1890,10 @@ def stats_data_api(request):
         from collectors.scripts.curator_full_scan import build_full_scan_result_from_row
         curator_clusters = _curator_clusters(conn)
 
+      skip_payload_cols = {
+        "created_at", "id", "ip_address", "ip", "cluster_name", "output",
+        "status_data", "output_json",
+      }
       for row in rows:
         row_dict = dict(row)
         ip = (
@@ -1854,9 +1903,16 @@ def stats_data_api(request):
           or row_dict.get("ip")
           or "Unknown"
         )
-        raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
+        raw_data = row_dict.get("status_data") or row_dict.get("output_json")
         if curator_clusters is not None:
           payload = build_full_scan_result_from_row(row_dict, curator_clusters)
+        elif raw_data is None:
+          # Flat API metric rows (e.g. controller_iops column + ip_address).
+          payload = {
+            key: value
+            for key, value in row_dict.items()
+            if key not in skip_payload_cols and value is not None
+          }
         elif isinstance(raw_data, (dict, list)):
           payload = raw_data
         else:
