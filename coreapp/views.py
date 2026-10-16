@@ -1617,18 +1617,15 @@ def _normalize_stats_payload(stat_key, payload):
 
 
   if stat_key == "objects_lite_health":
-    phase = str(payload.get("phase") or "Unknown")
-    healthy = 1 if phase == "Running" else 0
+    phase = str(payload.get("phase") or payload.get("status") or "Unknown")
     pc_name = payload.get("pc_name") or "Prism Central"
     running_for = str(payload.get("running_for") or "").strip()
     summary = f"{pc_name}: objects-lite is {phase}"
     if running_for:
       summary += f", running for {running_for}"
-    if healthy:
-      summary += " (healthy)"
     summary += "."
     return {
-      "values": {"status": healthy},
+      "values": {"status": 1 if phase == "Running" else 0},
       "summary": summary,
       "details": payload,
     }
@@ -1649,93 +1646,6 @@ def _configured_stats_ips(endpoint_type):
     for item in get_endpoints().get(endpoint_key, [])
     if isinstance(item, dict) and (item.get("ip") or item.get("virtual_ip"))
   }
-
-
-def _pc_endpoint_for_ip(pc_ip):
-  """Return the configured PC endpoint matching *pc_ip*, or None."""
-  for item in get_endpoints().get("pcs", []):
-    if not isinstance(item, dict):
-      continue
-    ip = str(item.get("ip") or item.get("virtual_ip") or "").strip()
-    if ip == pc_ip:
-      return item
-  return None
-
-
-def _persist_objects_lite_result(pc_ip, payload):
-  """Store a live Objects Lite check in the stats table."""
-  db_path = os.path.join(dj_settings.BASE_DIR, "metrics.db")
-  with sqlite3.connect(db_path) as conn:
-    conn.execute(
-      """
-      CREATE TABLE IF NOT EXISTS check_objects_lite_health (
-        created_at TEXT not null,
-        ip_address TEXT,
-        status_data TEXT
-      )
-      """
-    )
-    conn.execute(
-      """
-      INSERT INTO check_objects_lite_health (created_at, ip_address, status_data)
-      VALUES (datetime('now'), ?, ?)
-      """,
-      (pc_ip, json.dumps(payload)),
-    )
-    conn.commit()
-
-
-def objects_lite_health_check_api(request):
-  """Run the Objects Lite kubectl health check for a selected PC."""
-  raw_target = (request.GET.get("target") or "").strip()
-  target = _extract_ipv4(raw_target)
-  if not target:
-    return JsonResponse(
-      {"error": "Target must contain a valid IP address."},
-      status=400,
-    )
-  if target not in _configured_stats_ips("PC"):
-    return JsonResponse(
-      {"error": f"Target {target} is not a configured PC endpoint."},
-      status=400,
-    )
-
-  pc = _pc_endpoint_for_ip(target) or {}
-  creds = pc.get("credentials") if isinstance(pc.get("credentials"), dict) else {}
-  username = (
-    pc.get("ssh_user")
-    or creds.get("username")
-    or creds.get("user")
-    or pc.get("user")
-    or "nutanix"
-  )
-  password = (
-    pc.get("ssh_password")
-    or creds.get("password")
-    or pc.get("password")
-    or ""
-  )
-
-  from collectors.scripts.check_objects_lite_health import check_objects_lite_health
-
-  try:
-    result = check_objects_lite_health(target, username, password)
-  except Exception as error:
-    return JsonResponse({"error": str(error)}, status=502)
-
-  result["pc_name"] = pc.get("name") or target
-  try:
-    _persist_objects_lite_result(target, result)
-  except sqlite3.Error:
-    pass
-
-  normalized = _normalize_stats_payload("objects_lite_health", result)
-  return JsonResponse({
-    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-    "ip": target,
-    "data": result,
-    **normalized,
-  })
 
 
 def stats_data_api(request):
