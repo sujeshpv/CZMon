@@ -10,7 +10,7 @@ import os
 import shlex
 import sys
 
-import paramiko
+from common.connection.ssh_connect import Ssh
 
 # --- Global Configurations ---
 # PCVM SSH credentials (not Prism admin). kubectl on PC requires this login.
@@ -24,12 +24,19 @@ PHASE_MARKER = "__CZMON_PHASE__"
 logger = logging.getLogger(__name__)
 
 
-def _sudo_kubectl_script(password: str) -> str:
+def get_pods(password: str) -> str:
   """Run both operator commands with sudo on the PCVM.
 
   1) sudo kubectl get pods -A | grep objects-lite  -> READY/STATUS/RESTARTS/AGE
   2) sudo kubectl get pod objects-lite-0 -n pc-platform-nci
      -o=jsonpath='{.status.phase}{"\\n"}'          -> pod state
+
+  Args:
+    password (str): PCVM password used for sudo -S when passwordless sudo
+      is not available.
+
+  Returns:
+    str: Remote shell script that runs both sudo kubectl commands.
   """
   list_plain = "sudo kubectl get pods -A | grep objects-lite"
   phase_plain = (
@@ -51,7 +58,14 @@ def _sudo_kubectl_script(password: str) -> str:
 
 
 def _clean_remote_output(raw_output: str) -> str:
-  """Drop sudo password prompts and other SSH/PTY noise."""
+  """Drop sudo password prompts and other SSH/PTY noise.
+
+  Args:
+    raw_output (str): Combined stdout or stderr from the remote SSH command.
+
+  Returns:
+    str: Output with empty lines and sudo password prompts removed.
+  """
   cleaned = []
   for line in (raw_output or "").splitlines():
     stripped = line.strip()
@@ -67,34 +81,35 @@ def _clean_remote_output(raw_output: str) -> str:
 
 
 def _run_ssh_command(ip: str, username: str, password: str, command: str) -> str:
-  """Run a remote command on the PCVM over SSH and return stdout."""
-  client = paramiko.SSHClient()
-  client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+  """Run a remote command on the PCVM using the shared SSH helper.
+
+  Args:
+    ip (str): Prism Central / PCVM IP to connect to.
+    username (str): SSH username, typically nutanix.
+    password (str): SSH password for the PCVM user.
+    command (str): Shell command to run on the remote host.
+
+  Returns:
+    str: Cleaned remote stdout from Ssh.execute.
+  """
+  ssh_obj = Ssh(ip, username, password, key_path=None)
   try:
-    client.connect(
-      hostname=ip,
-      username=username,
-      password=password,
-      timeout=20,
-      auth_timeout=20,
-    )
     wrapped = f"bash -lc {shlex.quote(command)}"
-    _, stdout, stderr = client.exec_command(wrapped, get_pty=True, timeout=30)
-    output = _clean_remote_output(
-      stdout.read().decode("utf-8", errors="replace")
-    )
-    error = _clean_remote_output(
-      stderr.read().decode("utf-8", errors="replace")
-    )
-    if error and not output:
-      raise RuntimeError(error)
-    return output
+    return _clean_remote_output(ssh_obj.execute(wrapped))
   finally:
-    client.close()
+    ssh_obj.close_session()
 
 
-def _parse_pod_list(raw_output: str) -> list:
-  """Parse `kubectl get pods -A | grep objects-lite` into pod dicts."""
+def get_pods_status(raw_output: str) -> list:
+  """Parse `kubectl get pods -A | grep objects-lite` into pod dicts.
+
+  Args:
+    raw_output (str): kubectl get pods listing filtered to objects-lite.
+
+  Returns:
+    list: Pod dicts with namespace, name, ready, status, restarts, age,
+      and running_for.
+  """
   pods = []
   for line in (raw_output or "").splitlines():
     line = line.strip()
@@ -131,7 +146,8 @@ def check_objects_lite_health(pc_ip: str, username: str = None, password: str = 
     password (str): Unused; SSH password is DEF_PWD.
 
   Returns:
-    dict: Pod list, kubectl phase, and healthy flag.
+    dict: Pod list, kubectl phase/status, running_for, ready, and restarts.
+      Includes an error key when SSH/kubectl fails.
   """
   ssh_user = DEF_UNAME
   ssh_password = DEF_PWD
@@ -140,7 +156,7 @@ def check_objects_lite_health(pc_ip: str, username: str = None, password: str = 
 
   try:
     combined_output = _run_ssh_command(
-      pc_ip, ssh_user, ssh_password, _sudo_kubectl_script(ssh_password)
+      pc_ip, ssh_user, ssh_password, get_pods(ssh_password)
     )
   except Exception as exc:
     last_error = exc
@@ -155,7 +171,7 @@ def check_objects_lite_health(pc_ip: str, username: str = None, password: str = 
     return {
       "error": f"SSH/sudo kubectl failed: {last_error}",
       "phase": "Unknown",
-      "healthy": False,
+      "status": "Unknown",
       "running_for": "",
       "pods": [],
     }
@@ -163,7 +179,7 @@ def check_objects_lite_health(pc_ip: str, username: str = None, password: str = 
   list_output, _, phase_block = combined_output.partition(PHASE_MARKER)
   list_output = list_output.strip()
   phase_output = phase_block.strip()
-  pods = _parse_pod_list(list_output)
+  pods = get_pods_status(list_output)
   phase = (phase_output or "").strip().splitlines()
   phase = next(
     (line.strip() for line in reversed(phase) if line.strip() in POD_PHASES),
@@ -200,8 +216,7 @@ def check_objects_lite_health(pc_ip: str, username: str = None, password: str = 
   running_for = primary.get("age") or primary.get("running_for") or ""
   return {
     "phase": phase,
-    "healthy": phase == "Running",
-    "status": "HEALTHY" if phase == "Running" else "UNHEALTHY",
+    "status": phase,
     "running_for": running_for,
     "ready": primary.get("ready") or "",
     "restarts": primary.get("restarts") or "",
@@ -214,7 +229,15 @@ def check_objects_lite_health(pc_ip: str, username: str = None, password: str = 
 
 
 def collect_all_objects_lite_health(config_path: str = None) -> None:
-  """Read endpoints, check Objects Lite on every PC, and print JSON."""
+  """Read endpoints, check Objects Lite on every PC, and print JSON.
+
+  Args:
+    config_path (str, optional): Path to the endpoints JSON config file.
+      Defaults to None (auto-resolves path).
+
+  Returns:
+    None: Prints a JSON object of Objects Lite results keyed by PC IP to stdout.
+  """
   if not config_path:
     base_dir = os.path.dirname(
       os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
