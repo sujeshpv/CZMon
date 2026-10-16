@@ -1615,6 +1615,51 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "ngt_status":
+    installed = int(_stats_number(payload.get("ngt_installed")))
+    not_installed = int(_stats_number(payload.get("ngt_not_installed")))
+    enabled = int(_stats_number(payload.get("ngt_enabled")))
+    disabled = int(_stats_number(payload.get("ngt_disabled")))
+    reachable = int(_stats_number(payload.get("ngt_reachable")))
+    total = int(_stats_number(payload.get("total_vms")))
+    return {
+      "values": {
+        "ngt_installed": installed,
+        "ngt_not_installed": not_installed,
+        "ngt_enabled": enabled,
+        "ngt_disabled": disabled,
+        "ngt_reachable": reachable,
+      },
+      "summary": (
+        f"{payload.get('Cluster_name') or 'Cluster'}: {installed} NGT installed, "
+        f"{not_installed} not installed, {enabled} enabled, {disabled} disabled, "
+        f"{reachable} reachable of {total} VM(s)."
+      ),
+      "details": payload,
+    }
+
+  if stat_key == "ssh_connections":
+    highest = int(_stats_number(payload.get("highest_established")))
+    total = int(
+      _stats_number(payload.get("total_established"), default=highest)
+    )
+    status = payload.get("status") or "UNKNOWN"
+    return {
+      "values": {"highest_established": highest, "total": total},
+      "summary": (
+        f"SSH ESTABLISHED: highest {highest} per CVM | "
+        f"cluster total {total} | status {status}."
+      ),
+      "details": payload,
+    }
+
+  if stat_key == "controller_iops":
+    iops = _stats_number(payload.get("controller_iops"))
+    return {
+      "values": {"controller_iops": iops},
+      "summary": f"Controller IOPS: {iops:g}.",
+      "details": payload,
+    }
 
   if stat_key == "objects_lite_health":
     phase = str(payload.get("phase") or payload.get("status") or "Unknown")
@@ -1734,6 +1779,10 @@ def stats_data_api(request):
       """
       rows = cursor.execute(query, params).fetchall()
 
+      skip_payload_cols = {
+        "created_at", "id", "ip_address", "ip", "cluster_name", "output",
+        "status_data", "output_json",
+      }
       for row in rows:
         row_dict = dict(row)
         ip = (
@@ -1742,8 +1791,15 @@ def stats_data_api(request):
           or row_dict.get("ip")
           or "Unknown"
         )
-        raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
-        if isinstance(raw_data, (dict, list)):
+        raw_data = row_dict.get("status_data") or row_dict.get("output_json")
+        if raw_data is None:
+          # Flat API metric rows (e.g. controller_iops column + ip_address).
+          payload = {
+            key: value
+            for key, value in row_dict.items()
+            if key not in skip_payload_cols and value is not None
+          }
+        elif isinstance(raw_data, (dict, list)):
           payload = raw_data
         else:
           try:
