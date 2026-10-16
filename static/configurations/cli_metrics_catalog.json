@@ -9,5 +9,12 @@
     "description": "Runs nodetool ring to verify Cassandra consistency",
     "command": ["nodetool -h 0 ring"],
     "endpoint_type": "PE"
+  },
+
+  "curator_full_scan": {
+    "description": "Last successful Curator scans of each PE, run once on the CVM the collector logs in to; the Full Scan details are filtered by collectors/scripts/curator_full_scan.py.",
+    "command": ["curator_cli get_last_successful_scans"],
+    "endpoint_type": ["PE"],
+    "run_once_per_endpoint": true
   }
 }

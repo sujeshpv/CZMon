@@ -7,4 +7,3 @@ CREATE TABLE clusters (
 CREATE TABLE snapshot_usage (
         created_at TEXT not null
       , name TEXT, id TEXT, ipv4 TEXT, version TEXT, targetVersion TEXT, externalSubnet TEXT, internalSubnet TEXT, uuid TEXT, output TEXT);
-
