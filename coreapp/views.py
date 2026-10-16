@@ -1615,28 +1615,6 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
-  if stat_key == "ngt_status":
-    installed = int(_stats_number(payload.get("ngt_installed")))
-    not_installed = int(_stats_number(payload.get("ngt_not_installed")))
-    enabled = int(_stats_number(payload.get("ngt_enabled")))
-    disabled = int(_stats_number(payload.get("ngt_disabled")))
-    reachable = int(_stats_number(payload.get("ngt_reachable")))
-    total = int(_stats_number(payload.get("total_vms")))
-    return {
-      "values": {
-        "ngt_installed": installed,
-        "ngt_not_installed": not_installed,
-        "ngt_enabled": enabled,
-        "ngt_disabled": disabled,
-        "ngt_reachable": reachable,
-      },
-      "summary": (
-        f"{payload.get('Cluster_name') or 'Cluster'}: {installed} NGT installed, "
-        f"{not_installed} not installed, {enabled} enabled, {disabled} disabled, "
-        f"{reachable} reachable of {total} VM(s)."
-      ),
-      "details": payload,
-    }
 
   if stat_key == "objects_lite_health":
     phase = str(payload.get("phase") or "Unknown")
