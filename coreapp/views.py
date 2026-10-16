@@ -1630,6 +1630,14 @@ def _normalize_stats_payload(stat_key, payload):
       "details": payload,
     }
 
+  if stat_key == "controller_iops":
+    iops = _stats_number(payload.get("controller_iops"))
+    return {
+      "values": {"controller_iops": iops},
+      "summary": f"Controller IOPS: {iops:g}.",
+      "details": payload,
+    }
+
   value = len(payload)
   return {
     "values": {"value": value},
@@ -1734,6 +1742,10 @@ def stats_data_api(request):
       """
       rows = cursor.execute(query, params).fetchall()
 
+      skip_payload_cols = {
+        "created_at", "id", "ip_address", "ip", "cluster_name", "output",
+        "status_data", "output_json",
+      }
       for row in rows:
         row_dict = dict(row)
         ip = (
@@ -1742,8 +1754,15 @@ def stats_data_api(request):
           or row_dict.get("ip")
           or "Unknown"
         )
-        raw_data = row_dict.get("status_data") or row_dict.get("output_json") or "{}"
-        if isinstance(raw_data, (dict, list)):
+        raw_data = row_dict.get("status_data") or row_dict.get("output_json")
+        if raw_data is None:
+          # Flat API metric rows (e.g. controller_iops column + ip_address).
+          payload = {
+            key: value
+            for key, value in row_dict.items()
+            if key not in skip_payload_cols and value is not None
+          }
+        elif isinstance(raw_data, (dict, list)):
           payload = raw_data
         else:
           try:
