@@ -14,7 +14,7 @@ Features:
 
 Usage:
     from alert_manager.alert_manager import AlertManager
-    
+
     manager = AlertManager()
     manager.load_policies()
     results = manager.execute_all_policies()
