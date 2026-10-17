@@ -162,34 +162,36 @@ class AlertOutputGenerator:
         self.logger.info(f"Alert output written to: {filepath}")
         return filepath
 
+    @staticmethod
+    def create_error_output(
+        policy_id: str,
+        policy_description: str,
+        error_message: str,
+        logger: Optional[logging.Logger] = None
+    ) -> tuple[Dict[str, Any], str]:
+        """
+        Create and write JSON output for error cases.
 
-def create_error_output(
-    policy_id: str,
-    policy_description: str,
-    error_message: str,
-    logger: Optional[logging.Logger] = None
-) -> tuple[Dict[str, Any], str]:
-    """
-    Create and write JSON output for error cases.
+        Convenience method for generating error outputs.
 
-    Args:
-        policy_id: Policy identifier
-        policy_description: Policy description
-        error_message: Error message
-        logger: Logger instance (optional)
+        Args:
+            policy_id: Policy identifier
+            policy_description: Policy description
+            error_message: Error message
+            logger: Logger instance (optional)
 
-    Returns:
-        Tuple of (json_data, output_file_path)
-    """
-    generator = AlertOutputGenerator(policy_id, logger)
+        Returns:
+            Tuple of (json_data, output_file_path)
+        """
+        generator = AlertOutputGenerator(policy_id, logger)
 
-    json_output = generator.generate_json_output(
-        policy_status=False,
-        policy_description=policy_description,
-        priority="P1",
-        issue=error_message,
-        cluster_details=[]
-    )
+        json_output = generator.generate_json_output(
+            policy_status=False,
+            policy_description=policy_description,
+            priority="P1",
+            issue=error_message,
+            cluster_details=[]
+        )
 
-    output_file = generator.write_json_output(json_output)
-    return json_output, output_file
+        output_file = generator.write_json_output(json_output)
+        return json_output, output_file
