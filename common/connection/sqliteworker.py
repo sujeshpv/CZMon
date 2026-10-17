@@ -1,6 +1,6 @@
 """Thread safe sqlite3 interface."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from common.logger.logger import EntryExit, setup_logger
 from common.exceptions.exceptions import *
 import sqlite3
@@ -62,6 +62,7 @@ class Sqlite3Worker(threading.Thread):
       self.sqlite3_cursor = self.sqlite3_conn.cursor()
       self.sql_queue = Queue.Queue(maxsize=max_queue_size)
       self.results = {}
+      self.column_info = {}  # Store column descriptions for dict conversion
       self.max_queue_size = max_queue_size
       self.exit_set = False
       self.exit_token = str(uuid.uuid4())
@@ -126,6 +127,9 @@ class Sqlite3Worker(threading.Thread):
         try:
           self.sqlite3_cursor.execute(query, values)
           self.results[token] = self.sqlite3_cursor.fetchall()
+          # Store column names for potential dict conversion
+          if self.sqlite3_cursor.description:
+            self.column_info[token] = [col[0] for col in self.sqlite3_cursor.description]
         except sqlite3.Error as err:
           error = CZMonError(
             "SQL query execution failed",
@@ -155,8 +159,59 @@ class Sqlite3Worker(threading.Thread):
       LOG.error(error)
       raise error
 
+
+
+
   @EntryExit
-  def execute(self, query, values=None):
+  def execute_query(self, query, params=None, return_as_dict=False):
+    try:
+      results =self.sqlite3_cursor.execute(query, params or [])
+      if not results:
+          return []
+
+      if return_as_dict:
+          columns = [col[0] for col in self.sqlite3_cursor.description]
+          return [dict(zip(columns, row)) for row in results]
+          
+      return results
+      
+    except sqlite3.Error as err:
+      error = CZMonError(
+        "SQL write execution failed",
+        cause=err,
+        context={"query": query}
+      )
+      LOG.error(error)
+
+    
+  def _get_column_names(self, table):
+    """
+    Get column names for a table using PRAGMA.
+    
+    Parameters
+    ----------
+    table : str
+        Table name.
+        
+    Returns
+    -------
+    list
+        List of column names.
+    """
+    try:
+      pragma_query = f"PRAGMA table_info({table})"
+      result = self.execute(pragma_query, [])
+      if result:
+        # Column name is at index 1 in PRAGMA table_info results
+        return [row[1] for row in result]
+      return []
+    except Exception as err:
+      LOG.warning(f"Failed to get column names for table {table}: {err}")
+      return []
+
+
+  @EntryExit
+  def execute(self, query, values=None, return_as_dict=False):
     """
     Queue a SQL query for execution.
 
@@ -166,11 +221,13 @@ class Sqlite3Worker(threading.Thread):
         SQL query to execute.
     values : list, optional
         Parameter values for the query.
+    return_as_dict : bool, optional
+        If True, return results as list of dicts. Default False.
 
     Returns
     -------
     list or None
-        Query results for SELECT statements.
+        Query results for SELECT statements. List of tuples or dicts.
     """
     try:
       if self.exit_set:
@@ -179,7 +236,21 @@ class Sqlite3Worker(threading.Thread):
       token = str(uuid.uuid4())
       if query.lower().strip().startswith(("select", "pragma")):
         self.sql_queue.put((token, query, values), timeout=5)
-        return self.query_results(token)
+        results = self.query_results(token)
+        
+        # Convert to dict if requested
+        if return_as_dict and results and token in self.column_info:
+          columns = self.column_info[token]
+          dict_results = [dict(zip(columns, row)) for row in results]
+          # Clean up column info after use
+          del self.column_info[token]
+          return dict_results
+        
+        # Clean up column info even if not used
+        if token in self.column_info:
+          del self.column_info[token]
+        
+        return results
       self.sql_queue.put((token, query, values), timeout=5)
     except Exception as err:
       error = CZMonError(
