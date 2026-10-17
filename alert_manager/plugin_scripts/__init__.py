@@ -1,0 +1,1 @@
+"""Alert plugin scripts package."""
