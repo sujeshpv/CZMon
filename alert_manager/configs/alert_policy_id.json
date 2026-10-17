@@ -3,15 +3,7 @@
     "policy_id": "AP0001",
     "description": "Monitor AHV partition usage - IPs from endpoints.json",
     "table_name": "check_ahv_home_usage",
-    "time_range": "<time_range>",
     "plugin_path": "alert_manager/plugin_scripts/partition_usage_alert.py",
-    "enabled": true,
-    "queries": [
-      {
-        "name": "latest_usage",
-        "sql": "SELECT status_data FROM <table_name> WHERE created_at >= datetime('now', '-17 days');",
-        "endpoint_type": ["PC"]
-      }
-    ]
+    "enabled": true
   }
 }

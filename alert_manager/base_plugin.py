@@ -31,12 +31,13 @@ class AlertPlugin(ABC):
         self.all_endpoints = all_endpoints
         self.logger = logging.getLogger(f"{self.__class__.__module__}.{self.__class__.__name__}")
         
-        # Quick access to common config sections
+        # Quick access to common config sections (optional)
         self.queries = config.get("queries", [])
         self.thresholds = config.get("thresholds", {})
         
-        # Process templates automatically
-        self._process_query_placeholders()
+        # Process templates automatically if queries exist
+        if self.queries:
+            self._process_query_placeholders()
     
     def _process_query_placeholders(self):
         """Process all templates in queries automatically.
@@ -75,11 +76,15 @@ class AlertPlugin(ABC):
             query_config["_processed_sql"] = replace_recursive(sql, self.config)
     
     def execute_queries(self, return_as_dict: bool = False) -> Dict[str, List]:
-        """Execute all queries for all IPs.
+        """Execute all queries for all IPs (optional - plugins can query directly).
+        
+        This method is optional. Plugins can choose to:
+        - Use this method if they define queries in config
+        - Query the database directly using self.db_worker.execute()
         
         Args:
             return_as_dict: If True, returns rows as dicts.
-            
+        
         Returns:
             dict: Query name -> list of results for all IPs.
         """

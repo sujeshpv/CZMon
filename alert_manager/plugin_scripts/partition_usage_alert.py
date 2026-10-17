@@ -1,5 +1,6 @@
 """Alert plugin for AHV partition usage monitoring."""
 
+import json
 from alert_manager.base_plugin import AlertPlugin
 from alert_manager.alert_output import AlertOutputGenerator
 from typing import Dict, Any
@@ -27,7 +28,18 @@ class PartitionUsageAlert(AlertPlugin):
             
         # Process each row from the query
         for row in usage_data:
-            status_data = row.get("status_data", {})
+            status_data_raw = row.get("status_data", {})
+            
+            # Parse JSON if it's a string
+            if isinstance(status_data_raw, str):
+                try:
+                    status_data = json.loads(status_data_raw)
+                except json.JSONDecodeError:
+                    self.logger.warning(f"Failed to parse status_data JSON: {status_data_raw[:100]}")
+                    continue
+            else:
+                status_data = status_data_raw
+            
             for cluster_id, nodes in status_data.items():
                 if not isinstance(nodes, list):
                     continue
@@ -111,7 +123,18 @@ class PartitionUsageAlert(AlertPlugin):
         """
         cluster_details = []
         for row in latest_usage_data:
-            status_data = row.get("status_data", {})
+            status_data_raw = row.get("status_data", {})
+            
+            # Parse JSON if it's a string
+            if isinstance(status_data_raw, str):
+                try:
+                    status_data = json.loads(status_data_raw)
+                except json.JSONDecodeError:
+                    self.logger.warning(f"Failed to parse status_data JSON: {status_data_raw[:100]}")
+                    continue
+            else:
+                status_data = status_data_raw
+            
             for cluster_id, nodes in status_data.items():
                 cluster_info = {
                     "cluster_id": cluster_id,
@@ -163,20 +186,31 @@ class PartitionUsageAlert(AlertPlugin):
         output_file = output_gen.write_json_output(json_output)
         return json_output, output_file
     
+    def _fetch_partition_usage_data(self) -> list:
+        """
+        Fetch partition usage data from database.
+        
+        Returns:
+            list: Query results with status_data
+        """
+        table_name = self.config.get("table_name", "check_ahv_home_usage")
+        query = f"SELECT status_data FROM {table_name} WHERE created_at >= datetime('now', '-17 days');"
+        
+        results = self.db_worker.execute(query, return_as_dict=True)
+        return results if results else []
+    
     def run_partition_usage_alert(self) -> Dict[str, Any]:
         """
         Run partition usage alert check with all logic.
         
-        Executes queries, checks thresholds, generates JSON output,
+        Fetches data, checks thresholds, generates JSON output,
         and returns formatted alert result.
         
         Returns:
             dict: Formatted alert result with status, message, triggered flag, and details
         """
-        results = self.execute_queries(return_as_dict=True)
-        
-        # Get the query results by name
-        latest_usage_data = results.get("latest_usage", [])
+        # Fetch partition usage data
+        latest_usage_data = self._fetch_partition_usage_data()
         
         if not latest_usage_data:
             # Generate JSON output for error case using common library

@@ -65,7 +65,7 @@ class AlertOutputGenerator:
     """Generator for alert JSON output."""
     
     # Output directory for JSON files
-    OUTPUT_DIR = "alert_manager/output"
+    OUTPUT_DIR = "alert_manager/outputs"
     
     def __init__(self, policy_id: str, logger: Optional[logging.Logger] = None):
         """
@@ -134,6 +134,9 @@ class AlertOutputGenerator:
         is_valid, error_msg = AlertOutputValidator.validate_json_output(json_data)
         if not is_valid:
             raise ValueError(f"Cannot write invalid JSON output: {error_msg}")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.OUTPUT_DIR, exist_ok=True)
         
         # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
