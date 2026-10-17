@@ -9,14 +9,15 @@ import json
 import logging
 import os
 import sys
-import importlib.util
-from pathlib import Path
-from typing import Dict, List, Any, Optional
 
 # Add parent directory to path for imports to work
 _parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
+
+import importlib.util  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Dict, List, Any, Optional  # noqa: E402
 
 from common.connection.sqliteworker import Sqlite3Worker  # noqa: E402
 from alert_manager.base_plugin import AlertPlugin  # noqa: E402
