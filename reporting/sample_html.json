@@ -1,0 +1,48 @@
+{
+    "policy_id1":
+{
+    "policy_name": "Test_A",
+    "policy_status": "False",
+    "policy_description": "description about the policy what it does and output",
+    "priority": "P0",
+    "issue": "<description about what failed case, blank string if not failed>",
+    "owner": "<Let this field be there. we will fill it later about how to define>",
+    "date_time": "date and time when issue occured",
+    "cluster_detailes": "details of the cluster where issue happened"
+},
+"policy_id2":
+{
+       "policy_name": "Test_B",
+        "policy_status": "True",
+        "policy_description": "description about the policy what it does and output",
+        "priority": "P1",
+        "issue": "<description about what failed case, blank string if not failed>",
+        "owner": "<Let this field be there. we will fill it later about how to define>",
+        "date_time": "date and time when issue occured",
+        "cluster_detailes": "details of the cluster where issue happened"
+    },
+    "policy_id3" :       
+        {
+            "policy_name": "Test_c",
+            "policy_status": "False",
+            "policy_description": "description about the policy what it does and output",
+            "priority": "P0",
+            "issue": "<description about what failed case, blank string if not failed>",
+            "owner": "<Let this field be there. we will fill it later about how to define>",
+            "date_time": "date and time when issue occured",
+            "cluster_detailes": "details of the cluster where issue happened"
+            },
+            "policy_id4":
+            {
+                "policy_name": "Test_D",
+                "policy_status": "False",
+                "policy_description": "description about the policy what it does and output",
+                "priority": "P2",
+                "issue": "<description about what failed case, blank string if not failed>",
+                "owner": "<Let this field be there. we will fill it later about how to define>",
+                "date_time": "date and time when issue occured",
+                "cluster_detailes": "details of the cluster where issue happened"
+                }
+
+  }
+  
