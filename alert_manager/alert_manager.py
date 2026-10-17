@@ -5,20 +5,20 @@ plugin scripts, and executes alert checks.
 """
 
 import argparse
+import importlib.util
 import json
 import logging
 import os
 import sys
+from pathlib import Path
+from typing import Dict, List, Any, Optional
 
-# Add parent directory to path for imports to work
+# Add parent directory to path for local imports
 _parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-import importlib.util
-from pathlib import Path
-from typing import Dict, List, Any, Optional
-
+# Local imports (after sys.path modification)
 from common.connection.sqliteworker import Sqlite3Worker
 from alert_manager.base_plugin import AlertPlugin
 
@@ -34,11 +34,15 @@ class AlertManager:
         logger: Logger instance.
     """
 
-    def __init__(self, config_dir: Optional[str] = None, db_path: Optional[str] = None):
+    def __init__(
+            self, config_dir: Optional[str] = None,
+            db_path: Optional[str] = None
+    ):
         """Initialize Alert Manager.
 
         Args:
-            config_dir (str, optional): Path to configs directory. Auto-resolves if None.
+            config_dir (str, optional): Path to configs
+                directory. Auto-resolves if None.
             db_path (str, optional): Path to metrics.db. Auto-resolves if None.
         """
         self.logger = logging.getLogger(__name__)
@@ -50,14 +54,19 @@ class AlertManager:
 
         # Auto-resolve database path
         if not db_path:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            base_dir = os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )
             db_path = os.path.join(base_dir, "metrics.db")
 
         self.config_dir = config_dir
         self.db_worker = Sqlite3Worker(db_path)
         self.policies = {}
         self.endpoints = {}
-        self.logger.info(f"AlertManager initialized with config directory: {config_dir}")
+        self.logger.info(
+            f"AlertManager initialized with config directory: "
+            f"{config_dir}"
+        )
 
         # Load endpoints.json for dynamic IP resolution
         self._load_endpoints()
@@ -70,8 +79,13 @@ class AlertManager:
         """
         try:
             # Look for endpoints.json in standard location
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            endpoints_path = os.path.join(base_dir, "static", "configurations", "endpoints.json")
+            base_dir = os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )
+            endpoints_path = os.path.join(
+                base_dir, "static", "configurations",
+                "endpoints.json"
+            )
 
             if os.path.exists(endpoints_path):
                 with open(endpoints_path, "r") as f:
@@ -87,9 +101,15 @@ class AlertManager:
                             endpoint_copy["zone"] = zone
                             self.all_endpoints.append(endpoint_copy)
 
-                self.logger.info(f"Found {len(self.all_endpoints)} total endpoints")
+                self.logger.info(
+                    f"Found {len(self.all_endpoints)} total "
+                    f"endpoints"
+                )
             else:
-                self.logger.warning(f"endpoints.json not found at {endpoints_path}")
+                self.logger.warning(
+                    f"endpoints.json not found at "
+                    f"{endpoints_path}"
+                )
                 self.endpoints = {}
                 self.all_endpoints = []
         except Exception as e:
@@ -116,7 +136,10 @@ class AlertManager:
             with open(config_path, "r") as f:
                 self.policies = json.load(f)
 
-            self.logger.info(f"Loaded {len(self.policies)} alert policy/policies from {policy_file}")
+            self.logger.info(
+                f"Loaded {len(self.policies)} alert "
+                f"policy/policies from {policy_file}"
+            )
 
             # Validate policy structure
             for policy_id, policy in self.policies.items():
@@ -139,12 +162,21 @@ class AlertManager:
         missing = [f for f in required_fields if f not in policy]
 
         if missing:
-            raise ValueError(f"Policy {policy_id} missing required fields: {missing}")
+            raise ValueError(
+                f"Policy {policy_id} missing required fields: "
+                f"{missing}"
+            )
 
         if policy["policy_id"] != policy_id:
-            self.logger.warning(f"Policy ID mismatch: key={policy_id}, value={policy['policy_id']}")
+            self.logger.warning(
+                f"Policy ID mismatch: key={policy_id}, "
+                f"value={policy['policy_id']}"
+            )
 
-    def _load_plugin(self, plugin_path: str, policy_id: str, config: Dict[str, Any]) -> AlertPlugin:
+    def _load_plugin(
+            self, plugin_path: str, policy_id: str,
+            config: Dict[str, Any]
+    ) -> AlertPlugin:
         """Dynamically load and instantiate a plugin.
 
         Args:
@@ -186,9 +218,16 @@ class AlertManager:
         if not plugin_class:
             raise TypeError(f"No AlertPlugin subclass found in {plugin_path}")
 
-        # Instantiate plugin with new structure (policy_id, config, db_worker, endpoints)
-        plugin = plugin_class(policy_id, config, self.db_worker, self.endpoints, self.all_endpoints)
-        self.logger.info(f"Loaded plugin: {plugin_class.__name__} for policy {policy_id}")
+        # Instantiate plugin with new structure
+        # (policy_id, config, db_worker, endpoints)
+        plugin = plugin_class(
+            policy_id, config, self.db_worker,
+            self.endpoints, self.all_endpoints
+        )
+        self.logger.info(
+            f"Loaded plugin: {plugin_class.__name__} "
+            f"for policy {policy_id}"
+        )
 
         return plugin
 
@@ -219,7 +258,10 @@ class AlertManager:
                 "triggered": False
             }
 
-        self.logger.info(f"Executing policy {policy_id}: {policy.get('description', 'No description')}")
+        self.logger.info(
+            f"Executing policy {policy_id}: "
+            f"{policy.get('description', 'No description')}"
+        )
 
         try:
             # Load plugin - pass full config
@@ -232,7 +274,10 @@ class AlertManager:
             # Execute alert
             result = plugin.execute_alert()
 
-            self.logger.info(f"Policy {policy_id} completed: {result['status']}")
+            self.logger.info(
+                f"Policy {policy_id} completed: "
+                f"{result['status']}"
+            )
             return result
 
         except Exception as e:
@@ -244,7 +289,9 @@ class AlertManager:
                 "triggered": False
             }
 
-    def execute_all_policies(self, include_disabled: bool = False) -> List[Dict[str, Any]]:
+    def execute_all_policies(
+            self, include_disabled: bool = False
+    ) -> List[Dict[str, Any]]:
         """Execute all loaded alert policies.
 
         Args:
@@ -267,7 +314,9 @@ class AlertManager:
         self.logger.info(f"Executed {len(results)} alert policies")
         return results
 
-    def execute_policies_by_table(self, table_name: str) -> List[Dict[str, Any]]:
+    def execute_policies_by_table(
+            self, table_name: str
+    ) -> List[Dict[str, Any]]:
         """Execute all policies for a specific table.
 
         Args:
@@ -310,8 +359,13 @@ if __name__ == "__main__":
     # Create logger for main execution
     main_logger = logging.getLogger("alert_manager.main")
 
-    parser = argparse.ArgumentParser(description="CZMon Alert Manager - Generic Execution")
-    parser.add_argument("configs", nargs="*", help="Config file(s) - single or multiple")
+    parser = argparse.ArgumentParser(
+        description="CZMon Alert Manager - Generic Execution"
+    )
+    parser.add_argument(
+        "configs", nargs="*",
+        help="Config file(s) - single or multiple"
+    )
     parser.add_argument("--db", help="Database path")
     args = parser.parse_args()
 
@@ -327,7 +381,10 @@ if __name__ == "__main__":
         main_logger.info(f"Processing: {config_file}")
 
         # Resolve paths
-        config_dir = os.path.dirname(os.path.abspath(config_file)) if "/" in config_file else None
+        config_dir = (
+            os.path.dirname(os.path.abspath(config_file))
+            if "/" in config_file else None
+        )
         policy_file = os.path.basename(config_file)
 
         # Execute
@@ -339,12 +396,18 @@ if __name__ == "__main__":
         # Log results
         for result in results:
             icon = "⚠️" if result.get('triggered') else "✓"
-            main_logger.info(f"{icon} [{result['status']}] {result['policy_id']}: {result['message']}")
+            main_logger.info(
+                f"{icon} [{result['status']}] "
+                f"{result['policy_id']}: {result['message']}"
+            )
 
         manager.close()
 
     # Summary
     triggered = [r for r in all_results if r.get('triggered')]
     main_logger.info("=" * 70)
-    main_logger.info(f"SUMMARY: {len(all_results)} total, {len(triggered)} triggered")
+    main_logger.info(
+        f"SUMMARY: {len(all_results)} total, "
+        f"{len(triggered)} triggered"
+    )
     main_logger.info("=" * 70)
