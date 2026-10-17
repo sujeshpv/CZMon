@@ -15,12 +15,12 @@ _parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-import importlib.util  # noqa: E402
-from pathlib import Path  # noqa: E402
-from typing import Dict, List, Any, Optional  # noqa: E402
+import importlib.util
+from pathlib import Path
+from typing import Dict, List, Any, Optional
 
-from common.connection.sqliteworker import Sqlite3Worker  # noqa: E402
-from alert_manager.base_plugin import AlertPlugin  # noqa: E402
+from common.connection.sqliteworker import Sqlite3Worker
+from alert_manager.base_plugin import AlertPlugin
 
 
 class AlertManager:
@@ -34,11 +34,11 @@ class AlertManager:
         logger: Logger instance.
     """
 
-    def __init__(self, config_dir: Optional[str] = None, db_path: Optional[str] = None):  # noqa: E501
+    def __init__(self, config_dir: Optional[str] = None, db_path: Optional[str] = None):
         """Initialize Alert Manager.
 
         Args:
-            config_dir (str, optional): Path to configs directory. Auto-resolves if None.  # noqa: E501
+            config_dir (str, optional): Path to configs directory. Auto-resolves if None.
             db_path (str, optional): Path to metrics.db. Auto-resolves if None.
         """
         self.logger = logging.getLogger(__name__)
@@ -50,14 +50,14 @@ class AlertManager:
 
         # Auto-resolve database path
         if not db_path:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # noqa: E501
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             db_path = os.path.join(base_dir, "metrics.db")
 
         self.config_dir = config_dir
         self.db_worker = Sqlite3Worker(db_path)
         self.policies = {}
         self.endpoints = {}
-        self.logger.info(f"AlertManager initialized with config directory: {config_dir}")  # noqa: E501
+        self.logger.info(f"AlertManager initialized with config directory: {config_dir}")
 
         # Load endpoints.json for dynamic IP resolution
         self._load_endpoints()
@@ -70,8 +70,8 @@ class AlertManager:
         """
         try:
             # Look for endpoints.json in standard location
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # noqa: E501
-            endpoints_path = os.path.join(base_dir, "static", "configurations", "endpoints.json")  # noqa: E501
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            endpoints_path = os.path.join(base_dir, "static", "configurations", "endpoints.json")
 
             if os.path.exists(endpoints_path):
                 with open(endpoints_path, "r") as f:
@@ -87,9 +87,9 @@ class AlertManager:
                             endpoint_copy["zone"] = zone
                             self.all_endpoints.append(endpoint_copy)
 
-                self.logger.info(f"Found {len(self.all_endpoints)} total endpoints")  # noqa: E501
+                self.logger.info(f"Found {len(self.all_endpoints)} total endpoints")
             else:
-                self.logger.warning(f"endpoints.json not found at {endpoints_path}")  # noqa: E501
+                self.logger.warning(f"endpoints.json not found at {endpoints_path}")
                 self.endpoints = {}
                 self.all_endpoints = []
         except Exception as e:
@@ -116,7 +116,7 @@ class AlertManager:
             with open(config_path, "r") as f:
                 self.policies = json.load(f)
 
-            self.logger.info(f"Loaded {len(self.policies)} alert policy/policies from {policy_file}")  # noqa: E501
+            self.logger.info(f"Loaded {len(self.policies)} alert policy/policies from {policy_file}")
 
             # Validate policy structure
             for policy_id, policy in self.policies.items():
@@ -139,12 +139,12 @@ class AlertManager:
         missing = [f for f in required_fields if f not in policy]
 
         if missing:
-            raise ValueError(f"Policy {policy_id} missing required fields: {missing}")  # noqa: E501
+            raise ValueError(f"Policy {policy_id} missing required fields: {missing}")
 
         if policy["policy_id"] != policy_id:
-            self.logger.warning(f"Policy ID mismatch: key={policy_id}, value={policy['policy_id']}")  # noqa: E501
+            self.logger.warning(f"Policy ID mismatch: key={policy_id}, value={policy['policy_id']}")
 
-    def _load_plugin(self, plugin_path: str, policy_id: str, config: Dict[str, Any]) -> AlertPlugin:  # noqa: E501
+    def _load_plugin(self, plugin_path: str, policy_id: str, config: Dict[str, Any]) -> AlertPlugin:
         """Dynamically load and instantiate a plugin.
 
         Args:
@@ -186,9 +186,9 @@ class AlertManager:
         if not plugin_class:
             raise TypeError(f"No AlertPlugin subclass found in {plugin_path}")
 
-        # Instantiate plugin with new structure (policy_id, config, db_worker, endpoints)  # noqa: E501
-        plugin = plugin_class(policy_id, config, self.db_worker, self.endpoints, self.all_endpoints)  # noqa: E501
-        self.logger.info(f"Loaded plugin: {plugin_class.__name__} for policy {policy_id}")  # noqa: E501
+        # Instantiate plugin with new structure (policy_id, config, db_worker, endpoints)
+        plugin = plugin_class(policy_id, config, self.db_worker, self.endpoints, self.all_endpoints)
+        self.logger.info(f"Loaded plugin: {plugin_class.__name__} for policy {policy_id}")
 
         return plugin
 
@@ -219,7 +219,7 @@ class AlertManager:
                 "triggered": False
             }
 
-        self.logger.info(f"Executing policy {policy_id}: {policy.get('description', 'No description')}")  # noqa: E501
+        self.logger.info(f"Executing policy {policy_id}: {policy.get('description', 'No description')}")
 
         try:
             # Load plugin - pass full config
@@ -232,7 +232,7 @@ class AlertManager:
             # Execute alert
             result = plugin.execute_alert()
 
-            self.logger.info(f"Policy {policy_id} completed: {result['status']}")  # noqa: E501
+            self.logger.info(f"Policy {policy_id} completed: {result['status']}")
             return result
 
         except Exception as e:
@@ -244,7 +244,7 @@ class AlertManager:
                 "triggered": False
             }
 
-    def execute_all_policies(self, include_disabled: bool = False) -> List[Dict[str, Any]]:  # noqa: E501
+    def execute_all_policies(self, include_disabled: bool = False) -> List[Dict[str, Any]]:
         """Execute all loaded alert policies.
 
         Args:
@@ -267,7 +267,7 @@ class AlertManager:
         self.logger.info(f"Executed {len(results)} alert policies")
         return results
 
-    def execute_policies_by_table(self, table_name: str) -> List[Dict[str, Any]]:  # noqa: E501
+    def execute_policies_by_table(self, table_name: str) -> List[Dict[str, Any]]:
         """Execute all policies for a specific table.
 
         Args:
@@ -310,8 +310,8 @@ if __name__ == "__main__":
     # Create logger for main execution
     main_logger = logging.getLogger("alert_manager.main")
 
-    parser = argparse.ArgumentParser(description="CZMon Alert Manager - Generic Execution")  # noqa: E501
-    parser.add_argument("configs", nargs="*", help="Config file(s) - single or multiple")  # noqa: E501
+    parser = argparse.ArgumentParser(description="CZMon Alert Manager - Generic Execution")
+    parser.add_argument("configs", nargs="*", help="Config file(s) - single or multiple")
     parser.add_argument("--db", help="Database path")
     args = parser.parse_args()
 
@@ -327,7 +327,7 @@ if __name__ == "__main__":
         main_logger.info(f"Processing: {config_file}")
 
         # Resolve paths
-        config_dir = os.path.dirname(os.path.abspath(config_file)) if "/" in config_file else None  # noqa: E501
+        config_dir = os.path.dirname(os.path.abspath(config_file)) if "/" in config_file else None
         policy_file = os.path.basename(config_file)
 
         # Execute
@@ -339,12 +339,12 @@ if __name__ == "__main__":
         # Log results
         for result in results:
             icon = "⚠️" if result.get('triggered') else "✓"
-            main_logger.info(f"{icon} [{result['status']}] {result['policy_id']}: {result['message']}")  # noqa: E501
+            main_logger.info(f"{icon} [{result['status']}] {result['policy_id']}: {result['message']}")
 
         manager.close()
 
     # Summary
     triggered = [r for r in all_results if r.get('triggered')]
     main_logger.info("=" * 70)
-    main_logger.info(f"SUMMARY: {len(all_results)} total, {len(triggered)} triggered")  # noqa: E501
+    main_logger.info(f"SUMMARY: {len(all_results)} total, {len(triggered)} triggered")
     main_logger.info("=" * 70)
