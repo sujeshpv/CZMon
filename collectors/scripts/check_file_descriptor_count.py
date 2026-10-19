@@ -88,7 +88,15 @@ def classify_hermes_status(fd_count) -> str:
 
 
 def _empty_fd_row(host: str) -> dict:
-  """Return a per-host FD row with default process and Hermes fields."""
+  """Return a per-host FD row with default process and Hermes fields.
+
+  Args:
+    host (str): CVM or PCVM IP that this row represents.
+
+  Returns:
+    dict: Row with host, allocated, unused, max, status, top_processes,
+      and hermes keys.
+  """
   return {
     "host": host,
     "allocated": None,
@@ -117,6 +125,14 @@ def parse_file_nr_output(output: str, default_host: str = "") -> list:
   cleaned = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", output or "")
 
   def row_for(host):
+    """Return the mutable FD row for a host, creating it if needed.
+
+    Args:
+      host (str): CVM or PCVM IP from a host marker or default_host.
+
+    Returns:
+      dict: Existing or newly created per-host FD row.
+    """
     if host not in rows_by_host:
       rows_by_host[host] = _empty_fd_row(host)
       host_order.append(host)
@@ -181,6 +197,12 @@ def resolve_cluster_hermes(rows: list) -> list:
 
   Flow ANC Hermes runs on one PCVM in a 3-instance PC. Sibling VMs without
   that process are expected and must not look like a failure.
+
+  Args:
+    rows (list): Per-host FD dictionaries that may include a hermes object.
+
+  Returns:
+    list: The same rows with hermes.role set to active, standby, or missing.
   """
   if not any(isinstance(row, dict) and row.get("hermes") for row in rows):
     return rows
@@ -220,7 +242,14 @@ def resolve_cluster_hermes(rows: list) -> list:
 
 
 def _worst_status(statuses: list) -> str:
-  """Return the most severe status from a list of CVM statuses."""
+  """Return the most severe status from a list of CVM statuses.
+
+  Args:
+    statuses (list): Status strings such as HEALTHY, WARNING, CRITICAL, ERROR.
+
+  Returns:
+    str: The highest-severity status, or ERROR when the list is empty.
+  """
   order = {"CRITICAL": 3, "WARNING": 2, "HEALTHY": 1, "ERROR": 0}
   if not statuses:
     return "ERROR"
