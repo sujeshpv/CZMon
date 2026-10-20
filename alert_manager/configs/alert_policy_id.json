@@ -1,0 +1,9 @@
+{
+  "AP0001": {
+    "policy_id": "AP0001",
+    "description": "Monitor AHV partition usage - IPs from endpoints.json",
+    "table_name": "check_ahv_home_usage",
+    "plugin_path": "alert_manager/plugin_scripts/partition_usage_alert.py",
+    "enabled": true
+  }
+}
