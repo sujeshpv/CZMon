@@ -46,5 +46,9 @@
   "check_objects_lite_health": {
     "description": "Checks Objects Lite pod health on Prism Central",
     "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_objects_lite_health.py"]
+  },
+  "check_file_descriptor_count": {
+    "description": "Checks allocated file descriptor counts on CVM and PCVM hosts",
+    "command": ["/home/nutanix/CZMon/venv/bin/python3", "/home/nutanix/CZMon/collectors/scripts/check_file_descriptor_count.py"]
   }
 }
